@@ -6,6 +6,7 @@ const elements = {
     customLetters: document.querySelector("#custom-letters"),
     randomButton: document.querySelector("#random-game-button"),
     status: document.querySelector("#board-status"),
+    boardWrap: document.querySelector(".board-wrap"),
     grid: document.querySelector("#grid"),
     rack: document.querySelector("#rack"),
     rackCount: document.querySelector("#rack-count"),
@@ -192,6 +193,31 @@ function renderGrid() {
         for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
             elements.grid.append(renderCell(x, y, tiles, coverage));
         }
+    }
+
+    keepSelectedCellVisible();
+}
+
+function keepSelectedCellVisible() {
+    const selectedCell = elements.grid.querySelector(".cell.selected");
+    if (!selectedCell) {
+        return;
+    }
+
+    const wrapRect = elements.boardWrap.getBoundingClientRect();
+    const cellRect = selectedCell.getBoundingClientRect();
+    const margin = Math.max(selectedCell.offsetWidth, selectedCell.offsetHeight);
+
+    if (cellRect.left < wrapRect.left + margin) {
+        elements.boardWrap.scrollLeft -= wrapRect.left + margin - cellRect.left;
+    } else if (cellRect.right > wrapRect.right - margin) {
+        elements.boardWrap.scrollLeft += cellRect.right - (wrapRect.right - margin);
+    }
+
+    if (cellRect.top < wrapRect.top + margin) {
+        elements.boardWrap.scrollTop -= wrapRect.top + margin - cellRect.top;
+    } else if (cellRect.bottom > wrapRect.bottom - margin) {
+        elements.boardWrap.scrollTop += cellRect.bottom - (wrapRect.bottom - margin);
     }
 }
 
