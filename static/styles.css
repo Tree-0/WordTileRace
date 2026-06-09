@@ -225,6 +225,15 @@ input {
     padding: 12px;
 }
 
+.rack-panel {
+    position: sticky;
+    top: 16px;
+    align-self: start;
+    z-index: 2;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+}
+
 .panel-heading {
     display: flex;
     align-items: center;
