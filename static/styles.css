@@ -125,6 +125,12 @@ input {
     color: var(--bad);
 }
 
+.status-pill.complete {
+    background: var(--tile);
+    border-color: var(--tile-edge);
+    color: #3a2b00;
+}
+
 .board-wrap {
     overflow: auto;
     padding: 18px;
@@ -143,10 +149,13 @@ input {
     place-items: center;
     width: var(--cell-size);
     height: var(--cell-size);
+    min-height: 0;
+    padding: 0;
     border: 1px solid var(--line);
     border-radius: 4px;
     background: var(--cell);
     color: var(--muted);
+    line-height: 1;
 }
 
 .cell:hover {
@@ -172,6 +181,8 @@ input {
     place-items: center;
     width: calc(var(--cell-size) - 8px);
     height: calc(var(--cell-size) - 8px);
+    min-height: 0;
+    padding: 0;
     border: 1px solid var(--tile-edge);
     border-radius: 6px;
     background: var(--tile);
@@ -234,14 +245,47 @@ input {
 
 .rack {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
     gap: 8px;
     min-height: 72px;
+}
+
+.bag-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    margin-bottom: 10px;
+    padding: 8px;
+}
+
+.bag-row span {
+    color: var(--muted);
+}
+
+.bag-row strong {
+    font-variant-numeric: tabular-nums;
+}
+
+.bag-row button:disabled,
+.dump-button:disabled {
+    border-color: var(--line);
+    background: #e7ebe7;
+    color: #87908a;
+    cursor: not-allowed;
+}
+
+.rack-item {
+    display: grid;
+    gap: 4px;
 }
 
 .rack-tile {
     position: relative;
     min-height: 44px;
+    width: 100%;
 }
 
 .rack-tile .count {
@@ -250,6 +294,15 @@ input {
     right: 5px;
     font-size: 0.68rem;
     font-weight: 700;
+}
+
+.dump-button {
+    min-height: 28px;
+    padding: 0 6px;
+    border-color: var(--line);
+    background: #fff;
+    color: var(--accent);
+    font-size: 0.75rem;
 }
 
 .word-list,

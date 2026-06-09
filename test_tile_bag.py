@@ -5,6 +5,7 @@ import unittest
 from tile_bag import (
     DEFAULT_RANDOM_DRAW_COUNT,
     STANDARD_TILE_DISTRIBUTION,
+    draw_tiles,
     draw_random_rack,
     make_custom_rack,
 )
@@ -35,6 +36,15 @@ class TileBagTests(unittest.TestCase):
     def test_make_custom_rack_rejects_empty_input(self):
         with self.assertRaises(ValueError):
             make_custom_rack("   ")
+
+    def test_draw_tiles_mutates_bag(self):
+        bag = Counter({"A": 2, "B": 1})
+
+        drawn = draw_tiles(bag, 2, random.Random(1))
+
+        self.assertEqual(sum(drawn.values()), 2)
+        self.assertEqual(sum(bag.values()), 1)
+        self.assertEqual(drawn + bag, Counter({"A": 2, "B": 1}))
 
 
 if __name__ == "__main__":

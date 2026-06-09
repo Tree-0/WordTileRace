@@ -68,3 +68,32 @@ def draw_random_rack(
     ]
     rng = rng or random.Random()
     return Counter(rng.sample(tile_pool, count))
+
+
+def draw_tiles(
+    bag: Counter[str],
+    count: int,
+    rng: random.Random | None = None,
+) -> Counter[str]:
+    """Draw tiles from a mutable bag counter."""
+    if count < 0:
+        raise ValueError("Draw count cannot be negative.")
+
+    available_count = sum(bag.values())
+    if count > available_count:
+        raise ValueError("Cannot draw more tiles than the bag contains.")
+
+    tile_pool = [
+        char
+        for char, amount in bag.items()
+        for _ in range(amount)
+    ]
+    rng = rng or random.Random()
+    drawn_tiles = Counter(rng.sample(tile_pool, count))
+    bag.subtract(drawn_tiles)
+
+    for char in list(bag):
+        if bag[char] <= 0:
+            del bag[char]
+
+    return drawn_tiles
