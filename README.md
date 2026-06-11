@@ -45,13 +45,14 @@ or full official table rules.
 
 - Click a grid cell to select it.
 - Press `A-Z` to place that letter in the selected cell.
-- Press `Backspace` or `Delete` to remove the selected tile.
+  - Alternatively, drag a rack tile onto the grid to place it.
+- Press `Backspace`, `Escape`, or `Delete` to remove the selected tile.
 - Press arrow keys to move the selected cell.
-- Drag a rack tile onto the grid to place it.
 - Drag a placed tile to an empty cell to move it.
 - Drag a placed tile back to the rack to remove it.
-- Click `Peel` when it is enabled to draw one tile.
+- Click `Peel` when it is enabled (or press `Space`) to draw one tile.
 - Click `Dump` below a rack tile to return it and draw replacements.
+  - Alternatively, dump the tile in the currently selected cell using `Shift + Space`
 
 ## Files
 
