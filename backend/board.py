@@ -195,8 +195,32 @@ class Board:
     def is_valid_board(self) -> bool:
         """
         Check that all of the formed words on the board are in the dictionary,
-        and therefore acceptable. 
+        and therefore acceptable. All tiles must also be connected. 
         """
+
+        # Tiles must be adjacent to one another, either up-down or left-right.
+        # Board is invalid if sections are disjoint.
+        if self.placed_tiles:
+            unvisited = set(self.placed_tiles)
+            start = next(iter(unvisited))
+            unvisited.remove(start)
+            stack = [start]
+            while stack:
+                point = stack.pop()
+                x, y = point.x, point.y
+                for neighbor in (
+                    Point(x + 1, y),
+                    Point(x - 1, y),
+                    Point(x, y + 1),
+                    Point(x, y - 1),
+                ):
+                    if neighbor in unvisited:
+                        unvisited.remove(neighbor)
+                        stack.append(neighbor)
+
+            if unvisited:
+                return False
+
         formed_word_details = self.get_formed_word_details()
         if self.placed_tiles and not formed_word_details:
             return False
