@@ -225,6 +225,37 @@ input {
     padding: 12px;
 }
 
+.game-id-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.game-id-row label {
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.game-id-row input {
+    width: 100%;
+    min-width: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 0.78rem;
+    text-transform: none;
+}
+
+.game-id-row button {
+    padding: 0 10px;
+}
+
+.game-id-row button:disabled {
+    border-color: var(--line);
+    background: #e7ebe7;
+    color: #87908a;
+    cursor: not-allowed;
+}
+
 .rack-panel {
     position: sticky;
     top: 16px;

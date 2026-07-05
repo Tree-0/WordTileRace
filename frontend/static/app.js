@@ -8,6 +8,8 @@ const elements = {
     status: document.querySelector("#board-status"),
     boardWrap: document.querySelector(".board-wrap"),
     grid: document.querySelector("#grid"),
+    gameId: document.querySelector("#game-id"),
+    copyGameIdButton: document.querySelector("#copy-game-id-button"),
     rack: document.querySelector("#rack"),
     rackCount: document.querySelector("#rack-count"),
     bagCount: document.querySelector("#bag-count"),
@@ -101,11 +103,19 @@ function viewportBounds() {
 
 function render(state) {
     ui.state = state;
+    renderSession();
     renderStatus();
     renderRack();
     renderWords();
     renderMessages();
     renderGrid();
+}
+
+function renderSession() {
+    const gameId = ui.state.game_id || ui.gameId || "";
+    ui.gameId = gameId || null;
+    elements.gameId.value = gameId;
+    elements.copyGameIdButton.disabled = !gameId;
 }
 
 function renderMessage(message) {
@@ -166,6 +176,27 @@ function renderRack() {
 
         item.append(tile, dumpButton);
         elements.rack.append(item);
+    }
+}
+
+async function copyGameId() {
+    const gameId = elements.gameId.value;
+    if (!gameId) {
+        return;
+    }
+
+    elements.gameId.select();
+    elements.gameId.setSelectionRange(0, gameId.length);
+
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(gameId);
+        } else {
+            document.execCommand("copy");
+        }
+        renderMessage("Game ID copied.");
+    } catch (error) {
+        renderMessage("Select the Game ID and copy it.");
     }
 }
 
@@ -520,6 +551,7 @@ elements.randomButton.addEventListener("click", async () => {
 });
 
 elements.peelButton.addEventListener("click", peel);
+elements.copyGameIdButton.addEventListener("click", copyGameId);
 
 elements.rack.addEventListener("dragover", (event) => event.preventDefault());
 elements.rack.addEventListener("drop", async (event) => {
