@@ -19,24 +19,26 @@ const elements = {
 const ui = {
     selected: { x: 0, y: 0 },
     state: null,
+    socket: null,
+    gameId: null,
+    playerId: null,
     dragged: null,
     expandedWord: null,
     definitionCache: new Map(),
 };
 
-async function requestApi(path, payload = null) {
-    const options = payload === null
-        ? {}
-        : {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-        };
+function emitAction(eventName, payload = {}) {
+    return new Promise((resolve) => {
+        if (!ui.socket || !ui.socket.connected) {
+            renderMessage("Connection is not ready yet.");
+            resolve({ success: false, message: "Connection is not ready yet." });
+            return;
+        }
 
-    const response = await fetch(path, options);
-    const data = await response.json();
-    render(data);
-    return data;
+        ui.socket.emit(eventName, payload, (response = { success: true }) => {
+            resolve(response);
+        });
+    });
 }
 
 async function requestJson(path) {
@@ -104,6 +106,19 @@ function render(state) {
     renderWords();
     renderMessages();
     renderGrid();
+}
+
+function renderMessage(message) {
+    if (!ui.state) {
+        elements.status.classList.add("invalid");
+        elements.status.textContent = "Disconnected";
+        elements.messages.innerHTML = "";
+        const item = document.createElement("li");
+        item.textContent = message;
+        elements.messages.append(item);
+        return;
+    }
+    render({ ...ui.state, success: false, message });
 }
 
 function renderStatus() {
@@ -418,7 +433,7 @@ async function dropOnCell(x, y) {
     }
 
     if (ui.dragged.type === "rack") {
-        await requestApi("/api/place", {
+        await emitAction("place_tile", {
             x,
             y,
             char: ui.dragged.char,
@@ -427,7 +442,7 @@ async function dropOnCell(x, y) {
     }
 
     if (ui.dragged.type === "board") {
-        await requestApi("/api/move", {
+        await emitAction("move_tile", {
             from: ui.dragged.from,
             to: { x, y },
         });
@@ -441,7 +456,7 @@ async function placeSelected(char, overwrite) {
         return;
     }
 
-    await requestApi("/api/place", {
+    await emitAction("place_tile", {
         x: ui.selected.x,
         y: ui.selected.y,
         char,
@@ -454,15 +469,15 @@ async function removeSelected() {
         return;
     }
 
-    await requestApi("/api/remove", ui.selected);
+    await emitAction("remove_tile", ui.selected);
 }
 
 async function peel() {
-    await requestApi("/api/peel", {});
+    await emitAction("peel", {});
 }
 
 async function dumpTile(char) {
-    await requestApi("/api/dump", { char });
+    await emitAction("dump", { char });
 }
 
 function selectedTile() {
@@ -484,7 +499,7 @@ async function dumpSelectedTile() {
     const char = tile.char;
     const point = { ...ui.selected };
 
-    const removed = await requestApi("/api/remove", point);
+    const removed = await emitAction("remove_tile", point);
     if (removed.success) {
         await dumpTile(char);
     }
@@ -493,7 +508,7 @@ async function dumpSelectedTile() {
 elements.customForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     ui.selected = { x: 0, y: 0 };
-    await requestApi("/api/new", {
+    await emitAction("create_game", {
         mode: "custom",
         letters: elements.customLetters.value,
     });
@@ -501,7 +516,7 @@ elements.customForm.addEventListener("submit", async (event) => {
 
 elements.randomButton.addEventListener("click", async () => {
     ui.selected = { x: 0, y: 0 };
-    await requestApi("/api/new", { mode: "random" });
+    await emitAction("create_game", { mode: "random" });
 });
 
 elements.peelButton.addEventListener("click", peel);
@@ -511,7 +526,7 @@ elements.rack.addEventListener("drop", async (event) => {
     event.preventDefault();
     if (ui.dragged && ui.dragged.type === "board") {
         ui.selected = ui.dragged.from;
-        await requestApi("/api/remove", ui.dragged.from);
+        await emitAction("remove_tile", ui.dragged.from);
     }
     ui.dragged = null;
 });
@@ -568,4 +583,30 @@ document.addEventListener("keydown", async (event) => {
     }
 });
 
-requestApi("/api/state");
+function initializeSocket() {
+    if (!window.io) {
+        renderMessage("Socket.IO client failed to load.");
+        return;
+    }
+
+    ui.socket = window.io();
+    ui.socket.on("connect", () => {
+        const params = new URLSearchParams(window.location.search);
+        const gameId = params.get("game");
+        if (gameId) {
+            emitAction("join_game", { game_id: gameId });
+        } else {
+            emitAction("create_game", { mode: "random" });
+        }
+    });
+    ui.socket.on("joined_game", (data) => {
+        ui.gameId = data.game_id;
+        ui.playerId = data.player_id;
+    });
+    ui.socket.on("state", render);
+    ui.socket.on("action_error", (data) => {
+        renderMessage(data.message || "Action failed.");
+    });
+}
+
+initializeSocket();
