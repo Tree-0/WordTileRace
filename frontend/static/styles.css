@@ -125,6 +125,12 @@ input {
     color: var(--bad);
 }
 
+.status-pill.stale {
+    background: var(--orphan-bg);
+    border-color: var(--orphan);
+    color: var(--orphan);
+}
+
 .status-pill.complete {
     background: var(--tile);
     border-color: var(--tile-edge);
@@ -247,6 +253,14 @@ input {
 
 .game-id-row button {
     padding: 0 10px;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.game-id-row button.copied,
+.game-id-row button.copied:hover {
+    border-color: var(--good);
+    background: var(--good-bg);
+    color: var(--good);
 }
 
 .game-id-row button:disabled {
