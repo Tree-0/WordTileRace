@@ -27,7 +27,7 @@ class AppTests(unittest.TestCase):
         response = client.get("/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Bananagrams", response.data)
+        self.assertIn(b"Word Tile Race", response.data)
 
     def test_health_endpoint_returns_success(self):
         client = self.make_app().test_client()
@@ -37,6 +37,7 @@ class AppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(data["success"])
+        self.assertEqual(data["storage"], "memory")
 
     def test_definitions_endpoint_returns_grouped_meanings(self):
         def definition_lookup(word: str):

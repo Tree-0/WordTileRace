@@ -1,5 +1,7 @@
 const GRID_PADDING = 4;
 const MIN_GRID_SIZE = 13;
+const SESSION_STORAGE_KEY = "wordTileRaceSession";
+let copyFeedbackTimeout = null;
 
 const elements = {
     customForm: document.querySelector("#custom-game-form"),
@@ -9,7 +11,7 @@ const elements = {
     boardWrap: document.querySelector(".board-wrap"),
     grid: document.querySelector("#grid"),
     gameId: document.querySelector("#game-id"),
-    copyGameIdButton: document.querySelector("#copy-game-id-button"),
+    copyGameLinkButton: document.querySelector("#copy-game-link-button"),
     rack: document.querySelector("#rack"),
     rackCount: document.querySelector("#rack-count"),
     bagCount: document.querySelector("#bag-count"),
@@ -24,6 +26,7 @@ const ui = {
     socket: null,
     gameId: null,
     playerId: null,
+    inviteUrl: null,
     dragged: null,
     expandedWord: null,
     definitionCache: new Map(),
@@ -41,6 +44,40 @@ function emitAction(eventName, payload = {}) {
             resolve(response);
         });
     });
+}
+
+function savedSession() {
+    try {
+        const value = window.localStorage.getItem(SESSION_STORAGE_KEY);
+        return value ? JSON.parse(value) : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function saveSession(gameId, playerId) {
+    if (!gameId || !playerId) {
+        return;
+    }
+    try {
+        window.localStorage.setItem(
+            SESSION_STORAGE_KEY,
+            JSON.stringify({ gameId, playerId }),
+        );
+    } catch (error) {
+        // Local storage can be disabled; reconnect will simply be manual.
+    }
+}
+
+function inviteUrl(gameId) {
+    if (!gameId) {
+        return "";
+    }
+    const url = new URL(window.location.href);
+    url.search = "";
+    url.hash = "";
+    url.searchParams.set("game", gameId);
+    return url.toString();
 }
 
 async function requestJson(path) {
@@ -62,7 +99,7 @@ function tileMap() {
 
 function wordCoverage() {
     const coverage = new Map();
-    for (const detail of ui.state.formed_words) {
+    for (const detail of ui.state.formed_words || []) {
         for (const point of detail.points) {
             const key = pointKey(point.x, point.y);
             const previous = coverage.get(key);
@@ -101,8 +138,18 @@ function viewportBounds() {
     return { minX, maxX, minY, maxY };
 }
 
+function normalizedState(state) {
+    return {
+        ...state,
+        rack: state.rack || {},
+        placed_tiles: state.placed_tiles || [],
+        formed_words: state.formed_words || [],
+        messages: state.messages || [],
+    };
+}
+
 function render(state) {
-    ui.state = state;
+    ui.state = normalizedState(state);
     renderSession();
     renderStatus();
     renderRack();
@@ -111,11 +158,222 @@ function render(state) {
     renderGrid();
 }
 
+function applyStateDiff(diff) {
+    if (!ui.state) {
+        if (diff.message) {
+            renderMessage(diff.message);
+        }
+        return;
+    }
+
+    if (diff.success === false) {
+        renderMessage(diff.message || "Action failed.");
+        return;
+    }
+
+    const state = normalizedState({
+        ...ui.state,
+        rack: { ...ui.state.rack },
+        placed_tiles: ui.state.placed_tiles.map((tile) => ({ ...tile })),
+        messages: [...(ui.state.messages || [])],
+    });
+
+    if (diff.type === "tile_placed") {
+        setPlacedTile(state, diff.point, diff.tile);
+        applyRackDelta(state, diff.rack_delta);
+        updateActionFlags(state, diff);
+        updateChangedWordValidation(state, diff);
+    } else if (diff.type === "tile_moved") {
+        removePlacedTile(state, diff.from);
+        setPlacedTile(state, diff.to, diff.tile);
+        updateActionFlags(state, diff);
+        updateChangedWordValidation(state, diff);
+    } else if (diff.type === "tile_removed") {
+        removePlacedTile(state, diff.point);
+        applyRackDelta(state, diff.rack_delta);
+        updateActionFlags(state, diff);
+        updateChangedWordValidation(state, diff);
+    } else if (diff.type === "rack_changed" || diff.type === "peeled") {
+        applyRackDelta(state, diff.rack_delta);
+        if (typeof diff.bag_count === "number") {
+            state.bag_count = diff.bag_count;
+        }
+        if (diff.validated_board) {
+            applyValidatedBoard(state, diff.validated_board);
+        }
+        if (typeof diff.validation_stale === "boolean") {
+            state.validation_stale = diff.validation_stale;
+        }
+        if (typeof diff.is_valid === "boolean") {
+            state.is_valid = diff.is_valid;
+        }
+        updateActionFlags(state, diff);
+        if (diff.message) {
+            state.message = diff.message;
+            state.messages = [diff.message];
+        }
+    } else if (diff.type === "game_over") {
+        state.is_game_over = true;
+        state.winner_id = diff.winner_id;
+        state.winner_name = diff.winner_name;
+        state.bag_count = diff.bag_count;
+        state.can_peel = false;
+        state.can_dump = false;
+        state.validation_stale = false;
+        if (diff.validated_board) {
+            applyValidatedBoard(state, diff.validated_board);
+        }
+        state.message = diff.message || "Game complete.";
+        state.messages = [state.message];
+    }
+
+    render(state);
+}
+
+function setPlacedTile(state, point, tile) {
+    removePlacedTile(state, point);
+    state.placed_tiles.push({
+        x: point.x,
+        y: point.y,
+        char: tile.char,
+        is_wildcard: Boolean(tile.is_wildcard),
+    });
+}
+
+function removePlacedTile(state, point) {
+    state.placed_tiles = state.placed_tiles.filter((tile) =>
+        tile.x !== point.x || tile.y !== point.y
+    );
+}
+
+function applyRackDelta(state, rackDelta = {}) {
+    for (const [char, count] of Object.entries(rackDelta)) {
+        const nextCount = (state.rack[char] || 0) + Number(count);
+        if (nextCount > 0) {
+            state.rack[char] = nextCount;
+        } else {
+            delete state.rack[char];
+        }
+    }
+    state.rack_count = Object.values(state.rack).reduce((sum, count) => sum + count, 0);
+}
+
+function updateActionFlags(state, diff) {
+    if (typeof diff.can_dump === "boolean") {
+        state.can_dump = diff.can_dump;
+    }
+    if (typeof diff.can_peel === "boolean") {
+        state.can_peel = diff.can_peel;
+    }
+}
+
+function updateChangedWordValidation(state, diff) {
+    if (diff.partial_validation) {
+        applyPartialValidation(state, diff.partial_validation);
+        return;
+    }
+
+    markValidationStale(state, diff.message);
+}
+
+function applyPartialValidation(state, partialValidation) {
+    const changed = new Set(
+        (
+            partialValidation.changed_points ||
+            partialValidation.affected_points ||
+            []
+        ).map((point) =>
+            pointKey(point.x, point.y)
+        )
+    );
+    const affectedWordPoints = new Map();
+    for (const detail of partialValidation.formed_words || []) {
+        const points = affectedWordPoints.get(detail.direction) || new Set();
+        for (const point of detail.points) {
+            points.add(pointKey(point.x, point.y));
+        }
+        affectedWordPoints.set(detail.direction, points);
+    }
+
+    const nextWords = state.formed_words.filter((detail) =>
+        !wordTouchesChangedOrReplacedSegment(detail, changed, affectedWordPoints)
+    );
+    const existing = new Set(nextWords.map(wordSignature));
+
+    for (const detail of partialValidation.formed_words || []) {
+        const signature = wordSignature(detail);
+        if (!existing.has(signature)) {
+            nextWords.push(detail);
+            existing.add(signature);
+        }
+    }
+
+    state.formed_words = nextWords;
+    state.validation_stale = true;
+    state.is_valid = false;
+
+    const invalidWords = nextWords
+        .filter((detail) => !detail.is_valid)
+        .map((detail) => detail.word);
+    if (invalidWords.length > 0) {
+        state.message = `Invalid known words: ${[...new Set(invalidWords)].sort().join(", ")}.`;
+    } else if (nextWords.length > 0) {
+        state.message = "Changed words checked. Peel will validate the whole board.";
+    } else {
+        state.message = "No complete words are known yet.";
+    }
+    state.messages = [state.message];
+}
+
+function wordTouchesChangedOrReplacedSegment(detail, changed, affectedWordPoints) {
+    if (detail.points.some((point) => changed.has(pointKey(point.x, point.y)))) {
+        return true;
+    }
+
+    const replacedPoints = affectedWordPoints.get(detail.direction);
+    if (!replacedPoints) {
+        return false;
+    }
+
+    return detail.points.some((point) => replacedPoints.has(pointKey(point.x, point.y)));
+}
+
+function applyValidatedBoard(state, boardState) {
+    state.rack = { ...(boardState.rack || {}) };
+    state.rack_count = Object.values(state.rack).reduce((sum, count) => sum + count, 0);
+    state.placed_tiles = (boardState.placed_tiles || []).map((tile) => ({ ...tile }));
+    state.formed_words = (boardState.formed_words || []).map((detail) => ({
+        ...detail,
+        points: detail.points.map((point) => ({ ...point })),
+    }));
+    state.is_valid = Boolean(boardState.is_valid);
+    state.validation_stale = false;
+}
+
+function wordSignature(detail) {
+    const points = detail.points
+        .map((point) => pointKey(point.x, point.y))
+        .sort()
+        .join("|");
+    return `${detail.direction}:${points}:${detail.word}`;
+}
+
+function markValidationStale(state, message) {
+    state.validation_stale = true;
+    state.is_valid = false;
+    state.formed_words = [];
+    state.message = message || "Board changed. Peel will validate before drawing.";
+    state.messages = [state.message];
+}
+
 function renderSession() {
     const gameId = ui.state.game_id || ui.gameId || "";
     ui.gameId = gameId || null;
     elements.gameId.value = gameId;
-    elements.copyGameIdButton.disabled = !gameId;
+    elements.copyGameLinkButton.disabled = !gameId;
+    if (gameId && !ui.inviteUrl) {
+        ui.inviteUrl = inviteUrl(gameId);
+    }
 }
 
 function renderMessage(message) {
@@ -132,12 +390,15 @@ function renderMessage(message) {
 }
 
 function renderStatus() {
-    elements.status.classList.toggle("valid", ui.state.is_valid && !ui.state.is_game_over);
-    elements.status.classList.toggle("invalid", !ui.state.is_valid);
+    const isStale = Boolean(ui.state.validation_stale) && !ui.state.is_game_over;
+    const hasKnownWords = isStale && ui.state.formed_words.length > 0;
+    elements.status.classList.toggle("stale", isStale);
+    elements.status.classList.toggle("valid", ui.state.is_valid && !ui.state.is_game_over && !isStale);
+    elements.status.classList.toggle("invalid", !ui.state.is_valid && !isStale);
     elements.status.classList.toggle("complete", ui.state.is_game_over);
     elements.status.textContent = ui.state.is_game_over
         ? "Complete"
-        : ui.state.is_valid ? "Valid" : "Invalid";
+        : hasKnownWords ? "Partial" : isStale ? "Unvalidated" : ui.state.is_valid ? "Valid" : "Invalid";
 }
 
 function renderRack() {
@@ -179,29 +440,55 @@ function renderRack() {
     }
 }
 
-async function copyGameId() {
+async function copyGameLink() {
     const gameId = elements.gameId.value;
     if (!gameId) {
         return;
     }
 
-    elements.gameId.select();
-    elements.gameId.setSelectionRange(0, gameId.length);
-
+    const text = inviteUrl(gameId);
     try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(gameId);
+            await navigator.clipboard.writeText(text);
         } else {
+            const textarea = document.createElement("textarea");
+            textarea.value = text;
+            textarea.setAttribute("readonly", "");
+            textarea.style.position = "fixed";
+            textarea.style.left = "-9999px";
+            document.body.append(textarea);
+            textarea.select();
             document.execCommand("copy");
+            textarea.remove();
         }
-        renderMessage("Game ID copied.");
+        showCopyFeedback();
+        renderMessage("Game link copied.");
     } catch (error) {
-        renderMessage("Select the Game ID and copy it.");
+        renderMessage(`Could not copy automatically. Share this link: ${text}`);
     }
+}
+
+function showCopyFeedback() {
+    window.clearTimeout(copyFeedbackTimeout);
+    elements.copyGameLinkButton.textContent = "Copied!";
+    elements.copyGameLinkButton.classList.add("copied");
+    copyFeedbackTimeout = window.setTimeout(() => {
+        elements.copyGameLinkButton.textContent = "Copy Game Link";
+        elements.copyGameLinkButton.classList.remove("copied");
+        copyFeedbackTimeout = null;
+    }, 1800);
 }
 
 function renderWords() {
     elements.wordList.innerHTML = "";
+
+    if (ui.state.validation_stale && ui.state.formed_words.length === 0) {
+        ui.expandedWord = null;
+        const item = document.createElement("li");
+        item.textContent = "Unvalidated";
+        elements.wordList.append(item);
+        return;
+    }
 
     if (ui.state.formed_words.length === 0) {
         ui.expandedWord = null;
@@ -350,7 +637,11 @@ function renderMessages() {
     if (ui.state.message) {
         messages.push(ui.state.message);
     }
-    messages.push(...ui.state.messages);
+    for (const message of ui.state.messages || []) {
+        if (!messages.includes(message)) {
+            messages.push(message);
+        }
+    }
 
     for (const message of messages) {
         const item = document.createElement("li");
@@ -440,10 +731,14 @@ function renderBoardTile(tile, x, y, coverage) {
 
     const key = pointKey(x, y);
     const covered = coverage.get(key);
-    if (!covered) {
-        tileElement.classList.add("orphan");
-    } else if (covered.invalid) {
+    if (covered && covered.invalid) {
         tileElement.classList.add("invalid");
+    } else if (covered && covered.valid) {
+        tileElement.classList.add("valid");
+    } else if (!covered && ui.state.is_valid) {
+        tileElement.classList.add("valid");
+    } else if (!covered) {
+        tileElement.classList.add("orphan");
     } else {
         tileElement.classList.add("valid");
     }
@@ -539,6 +834,7 @@ async function dumpSelectedTile() {
 elements.customForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     ui.selected = { x: 0, y: 0 };
+    ui.inviteUrl = null;
     await emitAction("create_game", {
         mode: "custom",
         letters: elements.customLetters.value,
@@ -547,11 +843,12 @@ elements.customForm.addEventListener("submit", async (event) => {
 
 elements.randomButton.addEventListener("click", async () => {
     ui.selected = { x: 0, y: 0 };
+    ui.inviteUrl = null;
     await emitAction("create_game", { mode: "random" });
 });
 
 elements.peelButton.addEventListener("click", peel);
-elements.copyGameIdButton.addEventListener("click", copyGameId);
+elements.copyGameLinkButton.addEventListener("click", copyGameLink);
 
 elements.rack.addEventListener("dragover", (event) => event.preventDefault());
 elements.rack.addEventListener("drop", async (event) => {
@@ -622,20 +919,35 @@ function initializeSocket() {
     }
 
     ui.socket = window.io();
-    ui.socket.on("connect", () => {
+    ui.socket.on("connect", async () => {
         const params = new URLSearchParams(window.location.search);
         const gameId = params.get("game");
+        const saved = savedSession();
         if (gameId) {
-            emitAction("join_game", { game_id: gameId });
+            await emitAction("join_game", {
+                game_id: gameId,
+                player_id: saved && saved.gameId === gameId ? saved.playerId : null,
+            });
+        } else if (saved && saved.gameId && saved.playerId) {
+            const response = await emitAction("join_game", {
+                game_id: saved.gameId,
+                player_id: saved.playerId,
+            });
+            if (!response.success) {
+                await emitAction("create_game", { mode: "random" });
+            }
         } else {
-            emitAction("create_game", { mode: "random" });
+            await emitAction("create_game", { mode: "random" });
         }
     });
     ui.socket.on("joined_game", (data) => {
         ui.gameId = data.game_id;
         ui.playerId = data.player_id;
+        ui.inviteUrl = data.invite_url || inviteUrl(data.game_id);
+        saveSession(ui.gameId, ui.playerId);
     });
     ui.socket.on("state", render);
+    ui.socket.on("state_diff", applyStateDiff);
     ui.socket.on("action_error", (data) => {
         renderMessage(data.message || "Action failed.");
     });
