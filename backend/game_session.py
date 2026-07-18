@@ -7,7 +7,7 @@ import random
 from typing import Any
 from uuid import UUID, uuid4
 
-from backend.board import Board, Point, normalize_char
+from backend.board import Board, Point, Tile, normalize_char
 from backend.game import Player, PlayerState
 from backend.tile_bag import (
     DEFAULT_DUMP_DRAW_COUNT,
@@ -21,9 +21,36 @@ from backend.tile_bag import (
 BoardFactory = Callable[[Any], Board]
 
 
+def _point_payload(point: Point) -> dict[str, int]:
+    return {"x": point.x, "y": point.y}
+
+
+def _tile_payload(tile: Tile) -> dict:
+    return {
+        "char": tile.char,
+        "is_wildcard": tile.is_wildcard,
+    }
+
+
+def _counter_payload(counter: Counter[str]) -> dict[str, int]:
+    return {
+        char: count
+        for char, count in sorted(counter.items())
+        if count
+    }
+
+
+def _counter_delta(before: Counter[str], after: Counter[str]) -> dict[str, int]:
+    return {
+        char: after[char] - before[char]
+        for char in sorted(set(before) | set(after))
+        if after[char] != before[char]
+    }
+
+
 @dataclass
 class GameSession:
-    """Authoritative Bananagrams session state."""
+    """Authoritative word-tile session state."""
 
     game_id: UUID
     bag: Counter[str]
@@ -91,6 +118,9 @@ class GameSession:
         self.player_state[player_state.player.id] = player_state
         return player_state
 
+    def get_player_state(self, player_id: UUID | str) -> PlayerState:
+        return self._get_player_state(player_id)
+
     def place_tile(
         self,
         player_id: UUID | str,
@@ -98,32 +128,72 @@ class GameSession:
         x: int,
         y: int,
         overwrite: bool = False,
-    ) -> None:
+    ) -> dict:
         self._ensure_active()
         player_state = self._get_player_state(player_id)
+        before_rack = player_state.board.unplaced_letters.copy()
+        point = Point(x, y)
         if overwrite:
-            player_state.board.place_or_overwrite_tile(char, x, y)
+            tile = player_state.board.place_or_overwrite_tile(char, x, y)
         else:
-            player_state.board.place_tile(char, x, y)
-        self._update_winner(player_state)
+            tile = player_state.board.place_tile(char, x, y)
+        return {
+            "type": "tile_placed",
+            "point": _point_payload(point),
+            "tile": _tile_payload(tile),
+            "rack_delta": _counter_delta(
+                before_rack,
+                player_state.board.unplaced_letters,
+            ),
+            "partial_validation": (
+                player_state.board.get_formed_word_details_around_points([point])
+            ),
+            **self._action_capabilities(player_state),
+        }
 
     def move_tile(
         self,
         player_id: UUID | str,
         from_point: Point,
         to_point: Point,
-    ) -> None:
+    ) -> dict:
         self._ensure_active()
         player_state = self._get_player_state(player_id)
-        player_state.board.move_tile(from_point, to_point)
-        self._update_winner(player_state)
+        tile = player_state.board.move_tile(from_point, to_point)
+        return {
+            "type": "tile_moved",
+            "from": _point_payload(from_point),
+            "to": _point_payload(to_point),
+            "tile": _tile_payload(tile),
+            "partial_validation": (
+                player_state.board.get_formed_word_details_around_points(
+                    [from_point, to_point]
+                )
+            ),
+            **self._action_capabilities(player_state),
+        }
 
-    def remove_tile(self, player_id: UUID | str, x: int, y: int) -> None:
+    def remove_tile(self, player_id: UUID | str, x: int, y: int) -> dict:
         self._ensure_active()
         player_state = self._get_player_state(player_id)
+        point = Point(x, y)
+        tile = player_state.board.placed_tiles.get(point)
+        before_rack = player_state.board.unplaced_letters.copy()
         if not player_state.board.remove_letter(x, y):
             raise ValueError(f"No tile placed at ({x}, {y}).")
-        self._update_winner(player_state)
+        return {
+            "type": "tile_removed",
+            "point": _point_payload(point),
+            "tile": _tile_payload(tile),
+            "rack_delta": _counter_delta(
+                before_rack,
+                player_state.board.unplaced_letters,
+            ),
+            "partial_validation": (
+                player_state.board.get_formed_word_details_around_points([point])
+            ),
+            **self._action_capabilities(player_state),
+        }
 
     def player_can_peel(self, player_id: UUID | str) -> bool:
         player_state = self._get_player_state(player_id)
@@ -133,7 +203,7 @@ class GameSession:
         player_state = self._get_player_state(player_id)
         return player_state.can_dump_rack and self.bag_count > 0
 
-    def peel(self, player_id: UUID | str) -> Counter[str]:
+    def peel(self, player_id: UUID | str) -> dict:
         self._ensure_active()
         player_state = self._get_player_state(player_id)
         if not player_state.can_peel_board:
@@ -141,21 +211,31 @@ class GameSession:
 
         if self.bag_count == 0:
             self.winner_id = player_state.player.id
-            return Counter()
+            return {
+                "type": "game_over",
+                "drawn_by_player": {},
+                "bag_count": self.bag_count,
+                "winner_id": str(self.winner_id),
+                "winner_name": player_state.player.player_name,
+            }
 
         player_count = len(self.player_state)
         if self.bag_count < player_count:
             raise ValueError("Fewer tiles in bag than number of players. Not peeling.")
 
-        drawn_by_player = Counter()
+        drawn_by_player = {}
         for other_player_state in self.player_state.values():
             drawn = draw_tiles(self.bag, 1, self.rng)
             other_player_state.board.unplaced_letters.update(drawn)
-            drawn_by_player.update(drawn)
+            drawn_by_player[str(other_player_state.player.id)] = _counter_payload(drawn)
 
-        return drawn_by_player
+        return {
+            "type": "peeled",
+            "drawn_by_player": drawn_by_player,
+            "bag_count": self.bag_count,
+        }
 
-    def dump(self, player_id: UUID | str, char: str) -> Counter[str]:
+    def dump(self, player_id: UUID | str, char: str) -> dict:
         self._ensure_active()
         if self.bag_count == 0:
             raise ValueError("No tiles remain in the bag.")
@@ -165,6 +245,7 @@ class GameSession:
         if player_state.board.unplaced_letters[char] <= 0:
             raise ValueError(f"No {char} tile is available to dump.")
 
+        before_rack = player_state.board.unplaced_letters.copy()
         player_state.board.unplaced_letters[char] -= 1
         if player_state.board.unplaced_letters[char] <= 0:
             del player_state.board.unplaced_letters[char]
@@ -173,7 +254,17 @@ class GameSession:
         draw_count = min(DEFAULT_DUMP_DRAW_COUNT, self.bag_count)
         drawn = draw_tiles(self.bag, draw_count, self.rng)
         player_state.board.unplaced_letters.update(drawn)
-        return drawn
+        return {
+            "type": "rack_changed",
+            "dumped": char,
+            "drawn": _counter_payload(drawn),
+            "rack_delta": _counter_delta(
+                before_rack,
+                player_state.board.unplaced_letters,
+            ),
+            "bag_count": self.bag_count,
+            **self._action_capabilities(player_state),
+        }
 
     def private_state(
         self,
@@ -189,11 +280,7 @@ class GameSession:
             "success": success,
             "game_id": str(self.game_id),
             "bag_count": self.bag_count,
-            "can_peel": (
-                not self.is_game_over
-                and player_state.can_peel_board
-                and self.bag_count >= len(self.player_state)
-            ),
+            "can_peel": self._can_player_attempt_peel(player_state, validate=True),
             "can_dump": (
                 not self.is_game_over
                 and player_state.can_dump_rack
@@ -232,6 +319,101 @@ class GameSession:
             "players": self._public_players(),
         }
 
+    def public_player_state(
+        self,
+        player_id: UUID | str,
+        *,
+        validate: bool = True,
+    ) -> dict:
+        return self._get_player_state(player_id).to_public_state(validate=validate)
+
+    def player_action_capabilities(self, player_id: UUID | str) -> dict:
+        return self._action_capabilities(self._get_player_state(player_id))
+
+    def to_record(self) -> dict:
+        return {
+            "version": 1,
+            "game_id": str(self.game_id),
+            "mode": self.mode,
+            "bag": dict(self.bag),
+            "custom_rack": (
+                dict(self.custom_rack)
+                if self.custom_rack is not None
+                else None
+            ),
+            "winner_id": str(self.winner_id) if self.winner_id else None,
+            "players": [
+                {
+                    "player_id": str(player_state.player.id),
+                    "player_name": player_state.player.player_name,
+                    "rack": dict(player_state.board.unplaced_letters),
+                    "placed_tiles": [
+                        {
+                            "x": point.x,
+                            "y": point.y,
+                            "char": tile.char,
+                            "is_wildcard": tile.is_wildcard,
+                        }
+                        for point, tile in sorted(
+                            player_state.board.placed_tiles.items(),
+                            key=lambda item: (item[0].y, item[0].x),
+                        )
+                    ],
+                }
+                for player_state in sorted(
+                    self.player_state.values(),
+                    key=lambda state: str(state.player.id),
+                )
+            ],
+        }
+
+    @classmethod
+    def from_record(
+        cls,
+        record: dict,
+        *,
+        board_factory: BoardFactory = Board,
+        rng: random.Random | None = None,
+    ) -> "GameSession":
+        rng = rng or random.Random()
+        mode = str(record["mode"])
+        player_state: dict[UUID, PlayerState] = {}
+        session = cls(
+            UUID(str(record["game_id"])),
+            Counter(record.get("bag") or {}),
+            rng,
+            player_state,
+            mode,
+            board_factory,
+            (
+                Counter(record["custom_rack"])
+                if record.get("custom_rack") is not None
+                else None
+            ),
+            (
+                UUID(str(record["winner_id"]))
+                if record.get("winner_id")
+                else None
+            ),
+        )
+
+        for player_record in record.get("players", []):
+            board = board_factory(Counter(player_record.get("rack") or {}))
+            for tile_record in player_record.get("placed_tiles", []):
+                point = Point(int(tile_record["x"]), int(tile_record["y"]))
+                board.placed_tiles[point] = Tile(
+                    str(tile_record["char"]),
+                    bool(tile_record.get("is_wildcard", False)),
+                )
+            player = Player(
+                player_record.get("player_name"),
+                UUID(str(player_record["player_id"])),
+            )
+            restored_player_state = PlayerState(player, board, mode)
+            session.player_state[player.id] = restored_player_state
+
+        return session
+
     def _public_players(self) -> list[dict]:
         return [
             player_state.to_public_state()
@@ -241,13 +423,34 @@ class GameSession:
             )
         ]
 
-    def _update_winner(self, player_state: PlayerState) -> None:
-        if (
-            self.bag_count == 0
-            and player_state.rack_count == 0
-            and player_state.board.is_valid_board()
-        ):
-            self.winner_id = player_state.player.id
+    def _action_capabilities(self, player_state: PlayerState) -> dict:
+        return {
+            "can_peel": self._can_player_attempt_peel(player_state, validate=False),
+            "can_dump": (
+                not self.is_game_over
+                and player_state.can_dump_rack
+                and self.bag_count > 0
+            ),
+        }
+
+    def _can_player_attempt_peel(
+        self,
+        player_state: PlayerState,
+        *,
+        validate: bool,
+    ) -> bool:
+        if self.is_game_over:
+            return False
+
+        board_ready = (
+            player_state.can_peel_board
+            if validate
+            else player_state.rack_count == 0
+        )
+        if not board_ready:
+            return False
+
+        return self.bag_count == 0 or self.bag_count >= len(self.player_state)
 
     def _ensure_active(self) -> None:
         if self.is_game_over:

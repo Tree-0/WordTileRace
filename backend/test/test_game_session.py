@@ -44,12 +44,20 @@ class GameSessionTests(unittest.TestCase):
         session = GameSession.new_game("BE", board_factory=make_board)
         player_state = session.add_player("TestPlayer")
 
-        session.place_tile(player_state.player.id, "B", 0, 0)
-        session.move_tile(player_state.player.id, Point(0, 0), Point(1, 0))
-        session.remove_tile(player_state.player.id, 1, 0)
+        place_result = session.place_tile(player_state.player.id, "B", 0, 0)
+        move_result = session.move_tile(player_state.player.id, Point(0, 0), Point(1, 0))
+        remove_result = session.remove_tile(player_state.player.id, 1, 0)
 
         self.assertEqual(player_state.board.unplaced_letters, Counter({"B": 1, "E": 1}))
         self.assertEqual(player_state.board.placed_tiles, {})
+        self.assertEqual(place_result["type"], "tile_placed")
+        self.assertEqual(place_result["rack_delta"], {"B": -1})
+        self.assertIn("partial_validation", place_result)
+        self.assertEqual(move_result["type"], "tile_moved")
+        self.assertIn("partial_validation", move_result)
+        self.assertEqual(remove_result["type"], "tile_removed")
+        self.assertEqual(remove_result["rack_delta"], {"B": 1})
+        self.assertIn("partial_validation", remove_result)
 
     def test_peel_draws_one_tile_for_every_player(self):
         session = GameSession.new_game(rng=random.Random(1), board_factory=make_board)
@@ -62,11 +70,16 @@ class GameSessionTests(unittest.TestCase):
 
         before_bag_count = session.bag_count
 
-        session.peel(first.player.id)
+        result = session.peel(first.player.id)
 
         self.assertEqual(session.bag_count, before_bag_count - 2)
         self.assertEqual(first.rack_count, 1)
         self.assertEqual(second.rack_count, 22)
+        self.assertEqual(result["type"], "peeled")
+        self.assertEqual(set(result["drawn_by_player"]), {
+            str(first.player.id),
+            str(second.player.id),
+        })
 
     def test_peel_rejects_invalid_player(self):
         session = GameSession.new_game(board_factory=make_board)
@@ -80,22 +93,50 @@ class GameSessionTests(unittest.TestCase):
         player_state.board.unplaced_letters = Counter({"B": 1})
         session.bag = Counter({"A": 1, "C": 1, "D": 1})
 
-        drawn = session.dump(player_state.player.id, "B")
+        result = session.dump(player_state.player.id, "B")
 
-        self.assertEqual(sum(drawn.values()), 3)
+        self.assertEqual(result["type"], "rack_changed")
+        self.assertEqual(sum(result["drawn"].values()), 3)
         self.assertEqual(player_state.rack_count, 3)
         self.assertEqual(session.bag_count, 1)
 
-    def test_winner_detected_when_bag_empty_rack_empty_and_board_valid(self):
+    def test_winner_detected_when_player_peels_with_empty_bag(self):
         session = GameSession.new_game("BE", board_factory=make_board)
         player_state = session.add_player("Natha")
 
         session.place_tile(player_state.player.id, "B", 0, 0)
         session.place_tile(player_state.player.id, "E", 1, 0)
+        result = session.peel(player_state.player.id)
 
+        self.assertEqual(result["type"], "game_over")
         self.assertTrue(session.is_game_over)
         self.assertEqual(session.winner_id, player_state.player.id)
         self.assertTrue(session.private_state(player_state.player.id)["is_game_over"])
+
+    def test_record_round_trip_preserves_game_state(self):
+        session = GameSession.new_game("BEAN", board_factory=make_board)
+        player_state = session.add_player("Natha")
+        session.place_tile(player_state.player.id, "B", 0, 0)
+        session.place_tile(player_state.player.id, "E", 1, 0)
+        session.bag = Counter({"Z": 2})
+
+        restored = GameSession.from_record(
+            session.to_record(),
+            board_factory=make_board,
+            rng=random.Random(3),
+        )
+        restored_player = restored.get_player_state(player_state.player.id)
+
+        self.assertEqual(restored.game_id, session.game_id)
+        self.assertEqual(restored.mode, "custom")
+        self.assertEqual(restored.custom_rack, Counter("BEAN"))
+        self.assertEqual(restored.bag, Counter({"Z": 2}))
+        self.assertEqual(restored_player.player.player_name, "Natha")
+        self.assertEqual(restored_player.board.unplaced_letters, Counter({"A": 1, "N": 1}))
+        self.assertEqual(
+            [tile["char"] for tile in restored_player.board.to_state()["placed_tiles"]],
+            ["B", "E"],
+        )
 
 
 if __name__ == "__main__":
