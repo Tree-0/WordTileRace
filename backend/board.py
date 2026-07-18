@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from collections import (
     Counter
 )
+from collections.abc import Iterable
 from pathlib import Path
 from backend.dictionary import trie
 from backend.dictionary import (
@@ -192,12 +193,71 @@ class Board:
         
         return formed_word_details
 
+    def get_formed_word_details_around_points(
+        self,
+        points: Iterable[Point],
+    ) -> dict:
+        """Return word details affected by specific board points."""
+        formed_word_details_by_key = {}
+        changed_points = set(points)
+
+        for point in changed_points:
+            for direction in ("horizontal", "vertical"):
+                for segment in self.__affected_segments(point, direction):
+                    if len(segment) <= 1:
+                        continue
+
+                    word = ''.join(self.placed_tiles[p].char for p in segment)
+                    key = (direction, tuple(segment))
+                    formed_word_details_by_key[key] = {
+                        "word": word,
+                        "direction": direction,
+                        "points": self.__serialize_points(set(segment)),
+                        "is_valid": self.__search_valid_words(word),
+                    }
+
+        return {
+            "formed_words": [
+                detail
+                for _, detail in sorted(
+                    formed_word_details_by_key.items(),
+                    key=lambda item: (
+                        item[0][0],
+                        item[0][1][0].y,
+                        item[0][1][0].x,
+                    ),
+                )
+            ],
+            "changed_points": self.__serialize_points(changed_points),
+            "affected_points": self.__serialize_points(changed_points),
+        }
+
     def is_valid_board(self) -> bool:
         """
         Check that all of the formed words on the board are in the dictionary,
         and therefore acceptable. All tiles must also be connected. 
         """
+        formed_word_details = self.get_formed_word_details()
+        return self.__is_valid_from_details(formed_word_details)
 
+    def to_fast_state(self) -> dict:
+        """Serialize board state without word scans or dictionary validation."""
+        return {
+            "rack": self.__serialized_rack(),
+            "placed_tiles": self.__serialized_placed_tiles(),
+        }
+
+    def to_state(self) -> dict:
+        """Serialize board state for the browser UI."""
+        formed_word_details = self.get_formed_word_details()
+        return {
+            **self.to_fast_state(),
+            "formed_words": formed_word_details,
+            "is_valid": self.__is_valid_from_details(formed_word_details),
+            "messages": self.__validation_messages(formed_word_details),
+        }
+
+    def __is_valid_from_details(self, formed_word_details: list[dict]) -> bool:
         # Tiles must be adjacent to one another, either up-down or left-right.
         # Board is invalid if sections are disjoint.
         if self.placed_tiles:
@@ -221,7 +281,6 @@ class Board:
             if unvisited:
                 return False
 
-        formed_word_details = self.get_formed_word_details()
         if self.placed_tiles and not formed_word_details:
             return False
 
@@ -236,31 +295,72 @@ class Board:
 
         return all(detail["is_valid"] for detail in formed_word_details)
 
-    def to_state(self) -> dict:
-        """Serialize board state for the browser UI."""
-        formed_word_details = self.get_formed_word_details()
-        return {
-            "rack": dict(sorted(
-                (char, count)
-                for char, count in self.unplaced_letters.items()
-                if count > 0
-            )),
-            "placed_tiles": [
-                {
-                    "x": point.x,
-                    "y": point.y,
-                    "char": tile.char,
-                    "is_wildcard": tile.is_wildcard,
-                }
-                for point, tile in sorted(
-                    self.placed_tiles.items(),
-                    key=lambda item: (item[0].y, item[0].x),
-                )
-            ],
-            "formed_words": formed_word_details,
-            "is_valid": self.is_valid_board(),
-            "messages": self.__validation_messages(formed_word_details),
-        }
+    def __serialized_rack(self) -> dict:
+        return dict(sorted(
+            (char, count)
+            for char, count in self.unplaced_letters.items()
+            if count > 0
+        ))
+
+    def __serialized_placed_tiles(self) -> list[dict]:
+        return [
+            {
+                "x": point.x,
+                "y": point.y,
+                "char": tile.char,
+                "is_wildcard": tile.is_wildcard,
+            }
+            for point, tile in sorted(
+                self.placed_tiles.items(),
+                key=lambda item: (item[0].y, item[0].x),
+            )
+        ]
+
+    def __affected_segments(
+        self,
+        point: Point,
+        direction: str,
+    ) -> list[list[Point]]:
+        if point in self.placed_tiles:
+            return [self.__segment_containing(point, direction)]
+
+        dx, dy = self.__direction_delta(direction)
+        segments = []
+        seen = set()
+        for neighbor in (
+            Point(point.x - dx, point.y - dy),
+            Point(point.x + dx, point.y + dy),
+        ):
+            if neighbor not in self.placed_tiles:
+                continue
+
+            segment = self.__segment_containing(neighbor, direction)
+            key = tuple(segment)
+            if key in seen:
+                continue
+            seen.add(key)
+            segments.append(segment)
+
+        return segments
+
+    def __segment_containing(self, point: Point, direction: str) -> list[Point]:
+        dx, dy = self.__direction_delta(direction)
+        start = point
+        while Point(start.x - dx, start.y - dy) in self.placed_tiles:
+            start = Point(start.x - dx, start.y - dy)
+
+        segment = []
+        current = start
+        while current in self.placed_tiles:
+            segment.append(current)
+            current = Point(current.x + dx, current.y + dy)
+
+        return segment
+
+    def __direction_delta(self, direction: str) -> tuple[int, int]:
+        if direction == "horizontal":
+            return 1, 0
+        return 0, 1
 
     def __validation_messages(self, formed_word_details: list[dict]) -> list[str]:
         if not self.placed_tiles:

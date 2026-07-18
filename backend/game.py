@@ -20,7 +20,7 @@ class Player:
 
 @dataclass
 class PlayerState:
-    """Private state for one Bananagrams player."""
+    """Private state for one word-tile player."""
 
     player: Player
     board: Board
@@ -52,25 +52,36 @@ class PlayerState:
     def can_dump_rack(self) -> bool:
         return self.rack_count > 0
 
-    def to_private_state(self) -> dict:
-        state = self.board.to_state()
+    def to_private_state(self, *, validate: bool = True) -> dict:
+        state = self.board.to_state() if validate else self.board.to_fast_state()
+        can_peel_board = self.can_peel_board if validate else self.rack_count == 0
         state.update({
             "player_id": str(self.player.id),
             "player_name": self.player.player_name,
             "rack_count": self.rack_count,
-            "can_peel_board": self.can_peel_board,
+            "can_peel_board": can_peel_board,
             "can_dump_rack": self.can_dump_rack,
             "mode": self.mode,
         })
+        if not validate:
+            state.update({
+                "formed_words": [],
+                "is_valid": False,
+                "messages": [],
+                "validation_stale": True,
+            })
         return state
 
-    def to_public_state(self) -> dict:
+    def to_public_state(self, *, validate: bool = True) -> dict:
+        board_is_valid = self.board_is_valid if validate else None
+        can_peel_board = self.can_peel_board if validate else self.rack_count == 0
         return {
             "player_id": str(self.player.id),
             "player_name": self.player.player_name,
             "rack_count": self.rack_count,
-            "board_is_valid": self.board_is_valid,
-            "can_peel_board": self.can_peel_board,
+            "board_is_valid": board_is_valid,
+            "can_peel_board": can_peel_board,
+            "validation_stale": not validate,
             "mode": self.mode,
         }
 
