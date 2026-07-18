@@ -3,12 +3,12 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Bananagrams</title>
+    <title>Word Tile Race</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
     <main class="app-shell">
-        <section class="play-area" aria-label="Bananagrams board">
+        <section class="play-area" aria-label="Word Tile Race board">
             <div class="top-bar">
                 <form id="custom-game-form" class="new-game-form">
                     <label for="custom-letters">Custom rack</label>
@@ -40,7 +40,7 @@
                 <div class="game-id-row">
                     <label for="game-id">ID</label>
                     <input id="game-id" type="text" value="" readonly>
-                    <button id="copy-game-id-button" type="button" disabled>Copy</button>
+                    <button id="copy-game-link-button" type="button" aria-live="polite" disabled>Copy Game Link</button>
                 </div>
             </section>
 

@@ -53,7 +53,7 @@ def draw_random_rack(
     rng: random.Random | None = None,
     distribution: Counter[str] | None = None,
 ) -> Counter[str]:
-    """Draw a random rack from a Bananagrams tile distribution."""
+    """Draw a random rack from the standard word-tile distribution."""
     if count < 0:
         raise ValueError("Draw count cannot be negative.")
 

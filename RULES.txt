@@ -1,4 +1,4 @@
-Will clean this up later, but some important notes about rules of Bananagrams
+Will clean this up later, but some important notes about rules
 that influence functionality:
 
 1. Words can only be formed left-to-right and top-to-bottom.

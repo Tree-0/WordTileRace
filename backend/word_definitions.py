@@ -77,7 +77,7 @@ def parse_definition_response(payload: Any, word: str) -> dict[str, Any]:
 def lookup_definitions(word: str) -> dict[str, Any]:
     normalized = normalize_word(word)
     url = API_URL.format(word=quote(normalized.lower()))
-    request = Request(url, headers={"User-Agent": "bananagrams-definition-lookup"})
+    request = Request(url, headers={"User-Agent": "word-tile-race-definition-lookup"})
 
     try:
         with urlopen(request, timeout=TIMEOUT_SECONDS) as response:

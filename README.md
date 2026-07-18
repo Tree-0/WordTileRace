@@ -1,9 +1,10 @@
-# Bananagrams
+# Word Tile Race
 
-A small local web version of Bananagrams built with a Python game model,
-Flask, Flask-SocketIO, and a vanilla JavaScript grid UI.
+An independent real-time word-tile web game built with a Python game model,
+Flask, Flask-SocketIO, Redis-ready session storage, and a vanilla JavaScript
+grid UI.
 
-## Run The App
+## Run Locally
 
 ```bash
 python3.14 -m venv .venv
@@ -14,54 +15,103 @@ python backend/main.py
 
 Open `http://127.0.0.1:5050`.
 
-The app uses Socket.IO for gameplay actions, so start it with
-`python backend/main.py` rather than `flask run`.
+Local runs use in-memory game storage unless `REDIS_URL` is set. Gameplay
+actions use Socket.IO, so start the app with `python backend/main.py` rather
+than `flask run`.
 
 To stop the server, return to the terminal running `python backend/main.py` and
-press `Ctrl+C`.
-
-If the server was started from another terminal or helper session, stop the
-process listening on port `5050`:
+press `Ctrl+C`. If another terminal started the process, stop whatever is using
+port `5050`:
 
 ```bash
 lsof -ti tcp:5050 | xargs kill
 ```
 
-## Multiplayer
+## Run With Docker Compose
 
-Opening the app starts a new random multiplayer game and joins you as the first
-player. Gameplay actions are sent over Socket.IO to the server, where
-`GameSession` validates and applies them before broadcasting updated state.
-
-To join the same in-memory game from another browser tab or device, use the game
-id from the active browser state and open:
-
-```text
-http://127.0.0.1:5050/?game=<game-id>
+```bash
+docker compose up --build
 ```
 
-The first multiplayer version stores games in server process memory. Restarting
-the server clears active games. If you are joining from another device on your
-local network, run the server on a reachable host/interface and use that host in
-the URL instead of `127.0.0.1`.
+Open `http://127.0.0.1:5050`. Compose starts both the web app and Redis, so it
+matches the deployable runtime shape more closely than the in-memory local run.
+
+## Multiplayer
+
+Opening the app creates or reconnects to a game and joins you as a player.
+Gameplay actions are sent over Socket.IO to the server, where `GameSession`
+validates and applies them before broadcasting updated private player state.
+
+The sidebar shows the current raw game id and has a copy button for a full
+invite URL:
+
+```text
+https://your-host.example/?game=<game-id>
+```
+
+The browser stores `{game_id, player_id}` in local storage so refreshes and
+revisits can reconnect to the same player when the game still exists. Redis
+games expire after `GAME_TTL_SECONDS`, which defaults to 2 hours.
+
+## Production Deployment
+
+The MVP deployment target is one web process plus Redis. That is enough for a
+small friend group and roughly a handful of concurrent games. Redis stores game
+records and also coordinates Socket.IO messages for future multi-process growth.
+
+Required environment variables:
+
+```text
+SECRET_KEY=<long random string>
+REDIS_URL=redis://...
+ALLOWED_ORIGINS=https://your-domain.example
+```
+
+Optional environment variables:
+
+```text
+GAME_TTL_SECONDS=7200
+PORT=5050
+HOST=0.0.0.0
+WEB_THREADS=20
+```
+
+Production command:
+
+```bash
+gunicorn --worker-class gthread --threads ${WEB_THREADS:-20} --bind 0.0.0.0:${PORT:-5050} backend.main:app
+```
+
+Human deployment checklist:
+
+- Choose a host that supports WebSockets.
+- Create a Redis instance and set `REDIS_URL`.
+- Set `SECRET_KEY` and `ALLOWED_ORIGINS`.
+- Deploy the Docker image or repo-based Docker build.
+- Point your domain to the host and enable HTTPS.
+- Verify two browsers or devices can join the same invite URL.
 
 ## Game Rules
 
-Bananagrams is a word-building tile game. In this version, you place tiles on
-an open grid to form connected words. Words can only read left-to-right or
-top-to-bottom. The board is valid when every placed tile belongs to a formed
-word and every formed word exists in the dictionary.
+Players place tiles on an open grid to form connected words. Words can only read
+left-to-right or top-to-bottom. A board is valid when every placed tile belongs
+to a formed word and every formed word exists in the dictionary.
 
-This version supports a custom starting rack or a random 21-tile rack. Each
-player has a separate board and rack. The game session owns the shared tile bag.
-When a player places every rack tile and has a valid board, they can peel to draw
-one tile for every player. A player can dump a rack tile while tiles remain in
-the bag; the dumped tile returns to the bag and that player draws up to three
-replacement tiles.
+Each player has a separate board and rack. The game session owns the shared tile
+bag. When a player places every rack tile and has a valid board, they can peel
+to draw one tile for every player. A player can dump a rack tile while tiles
+remain in the bag; the dumped tile returns to the bag and that player draws up
+to three replacement tiles.
 
 The game ends when the bag is empty and a player has an empty rack with a valid
-board. It does not yet include timers, scoring, persistence, or full official
-table rules.
+board. It does not yet include timers, scoring, persistence beyond Redis TTL, or
+full official table-game rules.
+
+## IP Note
+
+This project is an independent word-tile game. It uses original code and UI
+assets and should not use official product names, logos, packaging, photos, or
+trade dress from existing commercial games. See `LEGAL_NOTES.md`.
 
 ## Controls
 
@@ -72,40 +122,34 @@ table rules.
 - Press arrow keys to move the selected cell.
 - Drag a placed tile to an empty cell to move it.
 - Drag a placed tile back to the rack to remove it.
-- Click `Peel` when it is enabled (or press `Space`) to draw one tile.
+- Click `Peel` when it is enabled, or press `Space`, to draw one tile for every
+  player.
 - Click `Dump` below a rack tile to return it and draw replacements.
-  - Alternatively, dump the tile in the currently selected cell using `Shift + Space`
+  - Alternatively, dump the tile in the currently selected cell using
+    `Shift + Space`.
 
 ## Files
 
-- `backend/main.py`: Starts the Flask development server.
-- `backend/app.py`: Defines the Flask app, page route, health endpoint, definitions
-  endpoint, and Socket.IO initialization.
-- `backend/socket_handlers.py`: Socket.IO event handlers and in-memory session/connection
-  registry.
-- `backend/game_session.py`: Authoritative multiplayer session model, shared bag,
-  player actions, peel/dump logic, public/private state, and win condition.
+- `backend/main.py`: Importable app entrypoint and local Socket.IO runner.
+- `backend/app.py`: Flask app factory, page route, health endpoint, definitions
+  endpoint, store setup, and Socket.IO initialization.
+- `backend/socket_handlers.py`: Socket.IO event handlers, rooms, reconnect
+  handling, and process-local connection registry.
+- `backend/game_store.py`: Memory and Redis game storage.
+- `backend/game_session.py`: Authoritative multiplayer session model, shared
+  bag, player actions, public/private state, serialization, and win condition.
 - `backend/game.py`: Player and player-state models.
-- `backend/board.py`: Core board model for tile placement, movement, word discovery,
-  validation, and UI state serialization.
-- `backend/tile_bag.py`: Standard Bananagrams tile distribution, random rack drawing,
-  and custom rack parsing.
+- `backend/board.py`: Core board model for tile placement, movement, word
+  discovery, validation, and UI state serialization.
+- `backend/tile_bag.py`: Standard tile distribution, random rack drawing, and
+  custom rack parsing.
 - `backend/word_definitions.py`: Dictionary API lookup and response parsing.
 - `frontend/templates/index.html`: Main browser UI structure.
-- `frontend/static/app.js`: Frontend state rendering, keyboard controls, drag/drop, and
-  Socket.IO gameplay events.
-- `frontend/static/styles.css`: App layout, board grid, tile, rack, and status styling.
-- `backend/dictionary/trie.py`: Trie data structure used for word lookup.
-- `backend/dictionary/trie_cache.py`: Builds, saves, and loads the serialized trie.
-- `backend/dictionary/dictionary.txt`: Source word list.
-- `backend/dictionary/trie.pickle`: Cached serialized trie built from the dictionary.
-- `backend/dictionary/__init__.py`: Dictionary package exports.
-- `backend/test/test_board.py`: Unit tests for the board model.
-- `backend/test/test_game.py`: Unit tests for player state.
-- `backend/test/test_game_session.py`: Unit tests for multiplayer session actions,
-  shared bag behavior, and game completion.
-- `backend/test/test_tile_bag.py`: Unit tests for tile distribution and rack creation.
-- `backend/test/test_app.py`: Flask page, health, and definitions endpoint tests.
-- `backend/test/test_word_definitions.py`: Unit tests for definition lookup parsing.
+- `frontend/static/app.js`: Frontend state rendering, keyboard controls,
+  drag/drop, reconnects, invite copying, and Socket.IO gameplay events.
+- `frontend/static/styles.css`: App layout, board grid, tile, rack, and status
+  styling.
+- `Dockerfile`, `compose.yaml`: Containerized deployment and local Redis smoke
+  run.
+- `LEGAL_NOTES.md`: Branding/IP caution for public hosting.
 - `requirements.txt`: Python dependencies.
-- `RULES.txt`: Scratch notes for future rules work.
