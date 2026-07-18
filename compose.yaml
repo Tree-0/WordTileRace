@@ -1,0 +1,20 @@
+services:
+  web:
+    build: .
+    ports:
+      - "5050:5050"
+    environment:
+      PORT: "5050"
+      HOST: "0.0.0.0"
+      SECRET_KEY: "dev-compose-secret"
+      REDIS_URL: "redis://redis:6379/0"
+      ALLOWED_ORIGINS: "http://localhost:5050,http://127.0.0.1:5050"
+      GAME_TTL_SECONDS: "7200"
+      WEB_THREADS: "20"
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
