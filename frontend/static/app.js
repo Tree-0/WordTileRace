@@ -1,7 +1,7 @@
 const GRID_PADDING = 4;
 const MIN_GRID_SIZE = 13;
 const SESSION_STORAGE_KEY = "wordTileRaceSession";
-const SOCKET_TIMING_DEBUG = true;
+const SOCKET_TIMING_DEBUG = false;
 let copyFeedbackTimeout = null;
 
 const elements = {
