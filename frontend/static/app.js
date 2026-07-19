@@ -1,6 +1,7 @@
 const GRID_PADDING = 4;
 const MIN_GRID_SIZE = 13;
 const SESSION_STORAGE_KEY = "wordTileRaceSession";
+const SOCKET_TIMING_DEBUG = true;
 let copyFeedbackTimeout = null;
 
 const elements = {
@@ -30,6 +31,7 @@ const ui = {
     dragged: null,
     expandedWord: null,
     definitionCache: new Map(),
+    pendingActions: new Map(),
 };
 
 function emitAction(eventName, payload = {}) {
@@ -40,10 +42,91 @@ function emitAction(eventName, payload = {}) {
             return;
         }
 
-        ui.socket.emit(eventName, payload, (response = { success: true }) => {
+        const actionId = createActionId(eventName);
+        const sentAt = performance.now();
+        const debugPayload = {
+            ...payload,
+            _client_action_id: actionId,
+            _client_sent_at_ms: Date.now(),
+        };
+        ui.pendingActions.set(actionId, {
+            eventName,
+            sentAt,
+            wallSentAt: debugPayload._client_sent_at_ms,
+        });
+        logSocketTiming("emit", {
+            action: eventName,
+            client_action_id: actionId,
+            payload,
+        });
+
+        ui.socket.emit(eventName, debugPayload, (response = { success: true }) => {
+            logIncomingTiming("ack", response, eventName);
             resolve(response);
         });
     });
+}
+
+function createActionId(eventName) {
+    const random = Math.random().toString(36).slice(2, 8);
+    return `${eventName}-${Date.now()}-${random}`;
+}
+
+function logSocketTiming(label, details) {
+    if (!SOCKET_TIMING_DEBUG) {
+        return;
+    }
+    console.log(`[socket timing] ${label}`, details);
+}
+
+function logIncomingTiming(eventName, payload, fallbackAction = null) {
+    const timing = payload && payload.debug_timing;
+    if (!timing) {
+        return;
+    }
+
+    const pending = ui.pendingActions.get(timing.client_action_id);
+    const receivedAt = performance.now();
+    logSocketTiming(eventName, {
+        action: timing.action || fallbackAction,
+        client_action_id: timing.client_action_id,
+        event: eventName,
+        response_type: payload.type || null,
+        success: payload.success,
+        client_emit_to_receive_ms: pending
+            ? roundTiming(receivedAt - pending.sentAt)
+            : null,
+        client_to_server_receive_ms_approx: timing.client_sent_at_ms
+            ? roundTiming(timing.server_received_at_ms - timing.client_sent_at_ms)
+            : null,
+        server_process_ms: timing.server_process_ms,
+        server_steps_ms: timing.server_steps_ms || {},
+        server_received_at: new Date(timing.server_received_at_ms).toISOString(),
+    });
+
+    if (eventName === "ack" || eventName === "action_error") {
+        window.setTimeout(() => {
+            ui.pendingActions.delete(timing.client_action_id);
+        }, 5000);
+    }
+}
+
+function logRenderTiming(eventName, payload, startedAt) {
+    const timing = payload && payload.debug_timing;
+    if (!timing) {
+        return;
+    }
+
+    logSocketTiming("render", {
+        action: timing.action,
+        client_action_id: timing.client_action_id,
+        source_event: eventName,
+        render_ms: roundTiming(performance.now() - startedAt),
+    });
+}
+
+function roundTiming(value) {
+    return Math.round(value * 10) / 10;
 }
 
 function savedSession() {
@@ -941,14 +1024,26 @@ function initializeSocket() {
         }
     });
     ui.socket.on("joined_game", (data) => {
+        logIncomingTiming("joined_game", data);
         ui.gameId = data.game_id;
         ui.playerId = data.player_id;
         ui.inviteUrl = data.invite_url || inviteUrl(data.game_id);
         saveSession(ui.gameId, ui.playerId);
     });
-    ui.socket.on("state", render);
-    ui.socket.on("state_diff", applyStateDiff);
+    ui.socket.on("state", (state) => {
+        logIncomingTiming("state", state);
+        const renderStartedAt = performance.now();
+        render(state);
+        logRenderTiming("state", state, renderStartedAt);
+    });
+    ui.socket.on("state_diff", (diff) => {
+        logIncomingTiming("state_diff", diff);
+        const renderStartedAt = performance.now();
+        applyStateDiff(diff);
+        logRenderTiming("state_diff", diff, renderStartedAt);
+    });
     ui.socket.on("action_error", (data) => {
+        logIncomingTiming("action_error", data);
         renderMessage(data.message || "Action failed.");
     });
 }

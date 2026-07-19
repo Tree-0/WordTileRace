@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import random
+import time
 from typing import Any
 from uuid import UUID
 
@@ -75,6 +76,7 @@ def register_socket_handlers(
 
     @socketio.on("create_game")
     def create_game(payload=None):
+        debug = _debug_context("create_game", payload)
         try:
             payload = _payload(payload)
             _leave_existing_rooms()
@@ -101,15 +103,19 @@ def register_socket_handlers(
                 store.save(session)
 
             _bind_connection(game_id, player_state.player.id)
-            _emit_joined(session, player_state.player.id)
-            _broadcast_session(session, message="Started a new game.")
-            return _ack(session, player_state.player.id)
+            _emit_joined(session, player_state.player.id, debug=debug)
+            _broadcast_session(session, message="Started a new game.", debug=debug)
+            return _with_debug_timing(_ack(session, player_state.player.id), debug)
         except ValueError as error:
-            _emit_error(str(error))
-            return {"success": False, "message": str(error)}
+            _emit_error(str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
 
     @socketio.on("join_game")
     def join_game(payload=None):
+        debug = _debug_context("join_game", payload)
         try:
             payload = _payload(payload)
             _leave_existing_rooms()
@@ -133,35 +139,47 @@ def register_socket_handlers(
                 store.save(session)
 
             _bind_connection(game_id, player_state.player.id)
-            _emit_joined(session, player_state.player.id)
-            _broadcast_session(session, message="Joined the game.")
-            return _ack(session, player_state.player.id)
+            _emit_joined(session, player_state.player.id, debug=debug)
+            _broadcast_session(session, message="Joined the game.", debug=debug)
+            return _with_debug_timing(_ack(session, player_state.player.id), debug)
         except ValueError as error:
-            _emit_error(str(error))
-            return {"success": False, "message": str(error)}
+            _emit_error(str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
 
     @socketio.on("request_state")
     def request_state(payload=None):
+        debug = _debug_context("request_state", payload)
         try:
             session, player_id = _current_session(store)
-            _emit_private(session, player_id)
-            return {"success": True}
+            _emit_private(session, player_id, debug=debug)
+            return _with_debug_timing({"success": True}, debug)
         except ValueError as error:
-            _emit_error(str(error))
-            return {"success": False, "message": str(error)}
+            _emit_error(str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
 
     @socketio.on("validate_board")
     def validate_board(payload=None):
+        debug = _debug_context("validate_board", payload)
         try:
             session, player_id = _current_session(store)
-            _emit_private(session, player_id)
-            return {"success": True}
+            _emit_private(session, player_id, debug=debug)
+            return _with_debug_timing({"success": True}, debug)
         except ValueError as error:
-            _emit_error(str(error))
-            return {"success": False, "message": str(error)}
+            _emit_error(str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
 
     @socketio.on("place_tile")
     def place_tile(payload=None):
+        debug = _debug_context("place_tile", payload)
         try:
             payload = _payload(payload)
             point = _parse_point(payload)
@@ -171,16 +189,24 @@ def register_socket_handlers(
             def mutate(session, player_id):
                 return session.place_tile(player_id, char, point.x, point.y, overwrite)
 
-            session, player_id, diff = _mutate_current_session(store, mutate)
-            _emit_state_diff(session, player_id, diff)
+            session, player_id, diff = _mutate_current_session(
+                store,
+                mutate,
+                debug=debug,
+            )
+            _emit_state_diff(session, player_id, diff, debug=debug)
             _emit_public_player_diff(session, player_id)
-            return {"success": True}
+            return _with_debug_timing({"success": True}, debug)
         except ValueError as error:
-            _emit_action_failure(store, str(error))
-            return {"success": False, "message": str(error)}
+            _emit_action_failure(store, str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
 
     @socketio.on("move_tile")
     def move_tile(payload=None):
+        debug = _debug_context("move_tile", payload)
         try:
             payload = _payload(payload)
             from_point = _parse_point(payload, "from")
@@ -189,15 +215,23 @@ def register_socket_handlers(
             def mutate(session, player_id):
                 return session.move_tile(player_id, from_point, to_point)
 
-            session, player_id, diff = _mutate_current_session(store, mutate)
-            _emit_state_diff(session, player_id, diff)
-            return {"success": True}
+            session, player_id, diff = _mutate_current_session(
+                store,
+                mutate,
+                debug=debug,
+            )
+            _emit_state_diff(session, player_id, diff, debug=debug)
+            return _with_debug_timing({"success": True}, debug)
         except ValueError as error:
-            _emit_action_failure(store, str(error))
-            return {"success": False, "message": str(error)}
+            _emit_action_failure(store, str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
 
     @socketio.on("remove_tile")
     def remove_tile(payload=None):
+        debug = _debug_context("remove_tile", payload)
         try:
             payload = _payload(payload)
             point = _parse_point(payload)
@@ -205,29 +239,45 @@ def register_socket_handlers(
             def mutate(session, player_id):
                 return session.remove_tile(player_id, point.x, point.y)
 
-            session, player_id, diff = _mutate_current_session(store, mutate)
-            _emit_state_diff(session, player_id, diff)
+            session, player_id, diff = _mutate_current_session(
+                store,
+                mutate,
+                debug=debug,
+            )
+            _emit_state_diff(session, player_id, diff, debug=debug)
             _emit_public_player_diff(session, player_id)
-            return {"success": True}
+            return _with_debug_timing({"success": True}, debug)
         except ValueError as error:
-            _emit_action_failure(store, str(error))
-            return {"success": False, "message": str(error)}
+            _emit_action_failure(store, str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
 
     @socketio.on("peel")
     def peel(payload=None):
+        debug = _debug_context("peel", payload)
         try:
             def mutate(session, player_id):
                 return session.peel(player_id)
 
-            session, player_id, diff = _mutate_current_session(store, mutate)
-            _emit_peel_diffs(session, player_id, diff)
-            return {"success": True}
+            session, player_id, diff = _mutate_current_session(
+                store,
+                mutate,
+                debug=debug,
+            )
+            _emit_peel_diffs(session, player_id, diff, debug=debug)
+            return _with_debug_timing({"success": True}, debug)
         except ValueError as error:
-            _emit_action_failure(store, str(error), refresh=True)
-            return {"success": False, "message": str(error)}
+            _emit_action_failure(store, str(error), refresh=True, debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
 
     @socketio.on("dump")
     def dump(payload=None):
+        debug = _debug_context("dump", payload)
         try:
             payload = _payload(payload)
             char = str(payload.get("char", ""))
@@ -235,13 +285,20 @@ def register_socket_handlers(
             def mutate(session, player_id):
                 return session.dump(player_id, char)
 
-            session, player_id, diff = _mutate_current_session(store, mutate)
-            _emit_state_diff(session, player_id, diff)
+            session, player_id, diff = _mutate_current_session(
+                store,
+                mutate,
+                debug=debug,
+            )
+            _emit_state_diff(session, player_id, diff, debug=debug)
             _emit_public_player_diff(session, player_id)
-            return {"success": True}
+            return _with_debug_timing({"success": True}, debug)
         except ValueError as error:
-            _emit_action_failure(store, str(error))
-            return {"success": False, "message": str(error)}
+            _emit_action_failure(store, str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
 
     @socketio.on("disconnect")
     def disconnect(reason=None):
@@ -254,6 +311,54 @@ def _payload(payload) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("Expected a JSON object.")
     return payload
+
+
+def _debug_context(event_name: str, payload) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+
+    client_action_id = payload.get("_client_action_id")
+    if not client_action_id:
+        return None
+
+    return {
+        "action": event_name,
+        "client_action_id": str(client_action_id),
+        "client_sent_at_ms": payload.get("_client_sent_at_ms"),
+        "server_received_at_ms": round(time.time() * 1000, 3),
+        "server_started_at": time.perf_counter(),
+        "server_steps_ms": {},
+    }
+
+
+def _with_debug_timing(payload: dict, debug: dict | None) -> dict:
+    if debug is None:
+        return payload
+
+    return {
+        **payload,
+        "debug_timing": {
+            "action": debug["action"],
+            "client_action_id": debug["client_action_id"],
+            "client_sent_at_ms": debug["client_sent_at_ms"],
+            "server_received_at_ms": debug["server_received_at_ms"],
+            "server_process_ms": round(
+                (time.perf_counter() - debug["server_started_at"]) * 1000,
+                3,
+            ),
+            "server_steps_ms": debug["server_steps_ms"],
+        },
+    }
+
+
+def _debug_step(debug: dict | None, name: str, started_at: float) -> None:
+    if debug is None:
+        return
+
+    debug["server_steps_ms"][name] = round(
+        (time.perf_counter() - started_at) * 1000,
+        3,
+    )
 
 
 def _bind_connection(game_id: str, player_id: UUID) -> None:
@@ -291,12 +396,25 @@ def _session(store: GameStore, game_id: str) -> GameSession:
     return session
 
 
-def _mutate_current_session(store: GameStore, mutator) -> tuple[GameSession, UUID, dict]:
+def _mutate_current_session(
+    store: GameStore,
+    mutator,
+    *,
+    debug: dict | None = None,
+) -> tuple[GameSession, UUID, dict]:
     game_id, player_id = _current_connection()
+    lock_started_at = time.perf_counter()
     with store.lock(game_id):
+        _debug_step(debug, "lock_wait_ms", lock_started_at)
+        load_started_at = time.perf_counter()
         session = _session(store, game_id)
+        _debug_step(debug, "load_session_ms", load_started_at)
+        mutate_started_at = time.perf_counter()
         diff = mutator(session, player_id)
+        _debug_step(debug, "mutate_ms", mutate_started_at)
+        save_started_at = time.perf_counter()
         store.save(session)
+        _debug_step(debug, "save_session_ms", save_started_at)
     return session, player_id, diff
 
 
@@ -311,8 +429,17 @@ def _parse_point(payload: dict, name: str | None = None) -> Point:
         raise ValueError("Expected integer x and y coordinates.") from None
 
 
-def _emit_joined(session: GameSession, player_id: UUID) -> None:
-    emit("joined_game", _ack(session, player_id), to=request.sid)
+def _emit_joined(
+    session: GameSession,
+    player_id: UUID,
+    *,
+    debug: dict | None = None,
+) -> None:
+    emit(
+        "joined_game",
+        _with_debug_timing(_ack(session, player_id), debug),
+        to=request.sid,
+    )
 
 
 def _ack(session: GameSession, player_id: UUID) -> dict:
@@ -331,25 +458,43 @@ def _emit_private(
     success: bool = True,
     message: str | None = None,
     to: str | None = None,
+    debug: dict | None = None,
 ) -> None:
     emit(
         "state",
-        session.private_state(player_id, success=success, message=message),
+        _with_debug_timing(
+            session.private_state(player_id, success=success, message=message),
+            debug,
+        ),
         to=to or request.sid,
     )
 
 
-def _broadcast_session(session: GameSession, *, message: str | None = None) -> None:
+def _broadcast_session(
+    session: GameSession,
+    *,
+    message: str | None = None,
+    debug: dict | None = None,
+) -> None:
     for player_state in session.player_state.values():
         socketio.emit(
             "state",
-            session.private_state(player_state.player.id, message=message),
+            _with_debug_timing(
+                session.private_state(player_state.player.id, message=message),
+                debug,
+            ),
             to=_player_room(str(session.game_id), player_state.player.id),
         )
     socketio.emit("public_state", session.public_state(), to=_game_room(str(session.game_id)))
 
 
-def _emit_state_diff(session: GameSession, player_id: UUID, diff: dict) -> None:
+def _emit_state_diff(
+    session: GameSession,
+    player_id: UUID,
+    diff: dict,
+    *,
+    debug: dict | None = None,
+) -> None:
     payload = {"success": True, **diff}
     if diff["type"] in {"tile_placed", "tile_moved", "tile_removed"}:
         payload.update({
@@ -364,12 +509,18 @@ def _emit_state_diff(session: GameSession, player_id: UUID, diff: dict) -> None:
 
     socketio.emit(
         "state_diff",
-        payload,
+        _with_debug_timing(payload, debug),
         to=_player_room(str(session.game_id), player_id),
     )
 
 
-def _emit_peel_diffs(session: GameSession, peeling_player_id: UUID, diff: dict) -> None:
+def _emit_peel_diffs(
+    session: GameSession,
+    peeling_player_id: UUID,
+    diff: dict,
+    *,
+    debug: dict | None = None,
+) -> None:
     if diff["type"] == "game_over":
         for player_state in session.player_state.values():
             payload = {
@@ -385,7 +536,7 @@ def _emit_peel_diffs(session: GameSession, peeling_player_id: UUID, diff: dict) 
                 payload["validated_board"] = player_state.board.to_state()
             socketio.emit(
                 "state_diff",
-                payload,
+                _with_debug_timing(payload, debug),
                 to=_player_room(str(session.game_id), player_state.player.id),
             )
         socketio.emit(
@@ -420,7 +571,7 @@ def _emit_peel_diffs(session: GameSession, peeling_player_id: UUID, diff: dict) 
             })
         socketio.emit(
             "state_diff",
-            payload,
+            _with_debug_timing(payload, debug),
             to=_player_room(str(session.game_id), player_id),
         )
 
@@ -459,21 +610,26 @@ def _emit_action_failure(
     message: str,
     *,
     refresh: bool = False,
+    debug: dict | None = None,
 ) -> None:
     if not refresh:
-        _emit_error(message)
+        _emit_error(message, debug=debug)
         return
 
     try:
         session, player_id = _current_session(store)
     except ValueError:
-        _emit_error(message)
+        _emit_error(message, debug=debug)
         return
-    _emit_private(session, player_id, success=False, message=message)
+    _emit_private(session, player_id, success=False, message=message, debug=debug)
 
 
-def _emit_error(message: str) -> None:
-    emit("action_error", {"success": False, "message": message}, to=request.sid)
+def _emit_error(message: str, *, debug: dict | None = None) -> None:
+    emit(
+        "action_error",
+        _with_debug_timing({"success": False, "message": message}, debug),
+        to=request.sid,
+    )
 
 
 def _game_room(game_id: str) -> str:
