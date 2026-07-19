@@ -211,6 +211,54 @@ class BoardTests(unittest.TestCase):
         self.assertTrue(state["is_valid"])
         self.assertEqual(state["formed_words"][0]["word"], "BE")
 
+    def test_partial_validation_checks_only_words_around_point(self):
+        board = self.make_board("BEAT", valid_words={"BE", "BAT"})
+        board.place_tile("B", 0, 0)
+        board.place_tile("E", 1, 0)
+        board.place_tile("A", 0, 1)
+        board.place_tile("T", 0, 2)
+
+        state = board.get_formed_word_details_around_points([Point(0, 0)])
+
+        self.assertEqual(
+            {(detail["word"], detail["direction"]) for detail in state["formed_words"]},
+            {("BE", "horizontal"), ("BAT", "vertical")},
+        )
+        self.assertTrue(all(detail["is_valid"] for detail in state["formed_words"]))
+        self.assertIn({"x": 0, "y": 0}, state["affected_points"])
+
+    def test_partial_validation_only_marks_directly_changed_points(self):
+        board = self.make_board("DOGUUMB", valid_words={"DUG", "DUMB"})
+        board.place_tile("D", 0, 0)
+        board.place_tile("O", 1, 0)
+        board.place_tile("G", 2, 0)
+        board.place_tile("U", 0, 1)
+        board.place_tile("M", 0, 2)
+        board.place_tile("B", 0, 3)
+        board.place_or_overwrite_tile("U", 1, 0)
+
+        state = board.get_formed_word_details_around_points([Point(1, 0)])
+
+        self.assertEqual(state["affected_points"], [{"x": 1, "y": 0}])
+        self.assertEqual(
+            {(detail["word"], detail["direction"]) for detail in state["formed_words"]},
+            {("DUG", "horizontal")},
+        )
+
+    def test_partial_validation_after_removed_middle_tile_returns_split_words(self):
+        board = self.make_board("BEAN", valid_words={"BE", "AN"})
+        board.place_tile("B", 0, 0)
+        board.place_tile("E", 1, 0)
+        board.place_tile("A", 3, 0)
+        board.place_tile("N", 4, 0)
+
+        state = board.get_formed_word_details_around_points([Point(2, 0)])
+
+        self.assertEqual(
+            {(detail["word"], detail["direction"]) for detail in state["formed_words"]},
+            {("BE", "horizontal"), ("AN", "horizontal")},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,28 +3,140 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Bananagrams</title>
+    <title>Word Tile Race</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-    <main class="app-shell">
-        <section class="play-area" aria-label="Bananagrams board">
-            <div class="top-bar">
-                <form id="custom-game-form" class="new-game-form">
-                    <label for="custom-letters">Custom rack</label>
-                    <input
-                        id="custom-letters"
-                        name="letters"
-                        type="text"
-                        value=""
-                        autocomplete="off"
-                        spellcheck="false"
-                    >
-                    <button type="submit">Start Custom</button>
-                    <button id="random-game-button" type="button">Random 21</button>
-                </form>
+    <main id="home-view" class="lobby-shell">
+        <button
+            class="help-button corner-help-button"
+            type="button"
+            data-open-help
+            aria-label="Show game rules and controls"
+        >?</button>
 
-                <div class="status-pill" id="board-status">Loading</div>
+        <section class="lobby-card" aria-labelledby="lobby-title">
+            <header class="lobby-header">
+                <div class="title-tiles" aria-hidden="true">
+                    <span>W</span><span>O</span><span>R</span><span>D</span>
+                </div>
+                <h1 id="lobby-title">Word Tile Race</h1>
+                <p>Build fast, peel often, and be the first to finish your tiles.</p>
+            </header>
+
+            <div class="nickname-field">
+                <label for="nickname-input">Your nickname</label>
+                <input
+                    id="nickname-input"
+                    name="nickname"
+                    type="text"
+                    maxlength="24"
+                    placeholder="Pick a name"
+                    autocomplete="nickname"
+                    aria-describedby="nickname-help"
+                    required
+                >
+                <span id="nickname-help">Shown to the other players in your match.</span>
+            </div>
+
+            <div class="lobby-actions">
+                <section class="lobby-action" aria-labelledby="new-match-title">
+                    <h2 id="new-match-title">New match</h2>
+                    <p>Start with 21 random tiles from the standard bag.</p>
+                    <button id="random-game-button" class="wide-button" type="button">
+                        Create Random Match
+                    </button>
+
+                    <button
+                        id="settings-toggle"
+                        class="settings-toggle secondary-button"
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="new-game-settings"
+                    >
+                        Custom rules
+                    </button>
+
+                    <div id="new-game-settings" class="new-game-settings" hidden>
+                        <form id="custom-game-form" class="custom-game-form">
+                            <label for="custom-letters">Custom starting tiles</label>
+                            <p id="custom-letters-help" class="field-help">
+                                Give each player this exact rack. The shared bag will be empty.
+                            </p>
+                            <input
+                                id="custom-letters"
+                                name="letters"
+                                type="text"
+                                value=""
+                                placeholder="BEANSTALK"
+                                autocomplete="off"
+                                spellcheck="false"
+                                aria-describedby="custom-letters-help"
+                                required
+                            >
+                            <button class="wide-button" type="submit">Create Custom Match</button>
+                        </form>
+                    </div>
+                </section>
+
+                <section class="lobby-action" aria-labelledby="join-match-title">
+                    <h2 id="join-match-title">Join a match</h2>
+                    <p>Paste an invite link or enter the game ID.</p>
+                    <form id="join-game-form" class="join-game-form">
+                        <label class="visually-hidden" for="join-game-input">Game link or ID</label>
+                        <input
+                            id="join-game-input"
+                            name="game"
+                            type="text"
+                            placeholder="Link or game ID"
+                            autocomplete="off"
+                            spellcheck="false"
+                            required
+                        >
+                        <button class="wide-button" type="submit">Join Match</button>
+                    </form>
+                </section>
+            </div>
+
+            <p id="lobby-status" class="lobby-status" role="status" aria-live="polite" hidden></p>
+        </section>
+    </main>
+
+    <main id="game-view" class="app-shell" hidden>
+        <aside id="players-drawer" class="players-drawer" aria-label="Players">
+            <button
+                id="players-toggle"
+                class="players-tab"
+                type="button"
+                aria-expanded="false"
+                aria-controls="players-panel"
+            >
+                <span>Players</span>
+                <span id="players-count" class="players-count">0</span>
+            </button>
+            <div id="players-panel" class="players-panel" aria-hidden="true">
+                <h2>Players</h2>
+                <ul id="players-list" class="players-list"></ul>
+            </div>
+        </aside>
+
+        <button
+            class="help-button corner-help-button game-corner-help-button"
+            type="button"
+            data-open-help
+            aria-label="Show game rules and controls"
+        >?</button>
+
+        <section class="play-area" aria-label="Word Tile Race board">
+            <div class="top-bar">
+                <div class="game-toolbar">
+                    <a id="home-button" class="secondary-button home-button" href="{{ url_for('index') }}">Home</a>
+                    <strong>Word Tile Race</strong>
+                </div>
+
+                <div class="game-status-group">
+                    <div class="status-pill" id="board-status" role="status" aria-live="polite">Loading</div>
+                </div>
             </div>
 
             <div class="board-wrap">
@@ -33,6 +145,17 @@
         </section>
 
         <aside class="side-panel">
+            <section class="session-panel">
+                <div class="panel-heading">
+                    <h2>Game</h2>
+                </div>
+                <div class="game-id-row">
+                    <label for="game-id">ID</label>
+                    <input id="game-id" type="text" value="" readonly>
+                    <button id="copy-game-link-button" type="button" aria-live="polite" disabled>Copy Game Link</button>
+                </div>
+            </section>
+
             <section class="rack-panel">
                 <div class="panel-heading">
                     <h2>Rack</h2>
@@ -62,6 +185,59 @@
         </aside>
     </main>
 
+    <dialog id="help-dialog" class="app-dialog help-dialog" aria-labelledby="help-dialog-title">
+        <div class="dialog-heading">
+            <h2 id="help-dialog-title">How to play</h2>
+            <button class="dialog-close-button" type="button" data-close-dialog aria-label="Close">&times;</button>
+        </div>
+        <div class="dialog-content">
+            <section>
+                <h3>Rules</h3>
+                <p>
+                    Place tiles on the open grid to make connected words. Words read left-to-right
+                    or top-to-bottom, and every placed tile must belong to a valid word.
+                </p>
+                <p>
+                    Each player has their own board and rack, while everyone draws from the same bag.
+                    Finish a valid rack to peel one tile for every player, or dump one tile to draw up
+                    to three replacements.
+                </p>
+                <p>
+                    When the bag is empty, the first player to place every tile in valid words wins.
+                </p>
+            </section>
+            <section>
+                <h3>Controls</h3>
+                <dl class="control-list">
+                    <div><dt>Click / arrows</dt><dd>Select a grid cell</dd></div>
+                    <div><dt>A–Z / drag</dt><dd>Place a rack tile</dd></div>
+                    <div><dt>Backspace / Delete / Escape</dt><dd>Remove the selected tile</dd></div>
+                    <div><dt>Drag a placed tile</dt><dd>Move it or return it to the rack</dd></div>
+                    <div><dt>Peel / Space</dt><dd>Draw for every player</dd></div>
+                    <div><dt>Dump / Shift + Space</dt><dd>Exchange a tile</dd></div>
+                </dl>
+            </section>
+        </div>
+        <button class="wide-button" type="button" data-close-dialog>Got it</button>
+    </dialog>
+
+    <dialog
+        id="winner-dialog"
+        class="app-dialog winner-dialog"
+        aria-labelledby="winner-dialog-title"
+        aria-describedby="winner-message winner-detail"
+    >
+        <div class="dialog-heading">
+            <h2 id="winner-dialog-title">Game complete</h2>
+            <button class="dialog-close-button" type="button" data-close-dialog aria-label="Close">&times;</button>
+        </div>
+        <div class="winner-mark" aria-hidden="true">W</div>
+        <p id="winner-message" class="winner-message"></p>
+        <p id="winner-detail" class="winner-detail">All of their tiles are placed in valid words.</p>
+        <button class="wide-button" type="button" data-close-dialog>Back to the board</button>
+    </dialog>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

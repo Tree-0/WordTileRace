@@ -1,1 +1,1 @@
-"""Backend package for the Bananagrams app."""
+"""Backend package for the Word Tile Race app."""
