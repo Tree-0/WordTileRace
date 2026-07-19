@@ -14,7 +14,16 @@ const elements = {
     newGameSettings: document.querySelector("#new-game-settings"),
     joinForm: document.querySelector("#join-game-form"),
     joinInput: document.querySelector("#join-game-input"),
+    nicknameInput: document.querySelector("#nickname-input"),
     lobbyStatus: document.querySelector("#lobby-status"),
+    playersDrawer: document.querySelector("#players-drawer"),
+    playersToggle: document.querySelector("#players-toggle"),
+    playersPanel: document.querySelector("#players-panel"),
+    playersCount: document.querySelector("#players-count"),
+    playersList: document.querySelector("#players-list"),
+    helpDialog: document.querySelector("#help-dialog"),
+    winnerDialog: document.querySelector("#winner-dialog"),
+    winnerMessage: document.querySelector("#winner-message"),
     status: document.querySelector("#board-status"),
     boardWrap: document.querySelector(".board-wrap"),
     grid: document.querySelector("#grid"),
@@ -34,11 +43,14 @@ const ui = {
     socket: null,
     gameId: null,
     playerId: null,
+    playerName: null,
+    pendingPlayerName: null,
     inviteUrl: null,
     dragged: null,
     expandedWord: null,
     definitionCache: new Map(),
     pendingActions: new Map(),
+    dismissedWinner: null,
 };
 
 function emitAction(eventName, payload = {}) {
@@ -145,14 +157,14 @@ function savedSession() {
     }
 }
 
-function saveSession(gameId, playerId) {
+function saveSession(gameId, playerId, playerName = null) {
     if (!gameId || !playerId) {
         return;
     }
     try {
         window.localStorage.setItem(
             SESSION_STORAGE_KEY,
-            JSON.stringify({ gameId, playerId }),
+            JSON.stringify({ gameId, playerId, playerName }),
         );
     } catch (error) {
         // Local storage can be disabled; reconnect will simply be manual.
@@ -200,6 +212,18 @@ function clearLobbyMessage() {
     setLobbyMessage("");
 }
 
+function requiredPlayerName() {
+    const playerName = elements.nicknameInput.value.trim().replace(/\s+/g, " ");
+    if (!playerName) {
+        setLobbyMessage("Choose a nickname before entering a match.");
+        elements.nicknameInput.focus();
+        return null;
+    }
+
+    elements.nicknameInput.value = playerName;
+    return playerName;
+}
+
 function showGameView(gameId) {
     elements.homeView.hidden = true;
     elements.gameView.hidden = false;
@@ -220,6 +244,34 @@ function setSettingsOpen(isOpen) {
     elements.settingsToggle.textContent = isOpen ? "Hide custom rules" : "Custom rules";
     if (isOpen) {
         elements.customLetters.focus();
+    }
+}
+
+function setPlayersOpen(isOpen) {
+    elements.playersDrawer.classList.toggle("open", isOpen);
+    elements.playersToggle.setAttribute("aria-expanded", String(isOpen));
+    elements.playersPanel.setAttribute("aria-hidden", String(!isOpen));
+}
+
+function openDialog(dialog) {
+    if (!dialog || dialog.open) {
+        return;
+    }
+    if (typeof dialog.showModal === "function") {
+        dialog.showModal();
+    } else {
+        dialog.setAttribute("open", "");
+    }
+}
+
+function closeDialog(dialog) {
+    if (!dialog || !dialog.open) {
+        return;
+    }
+    if (typeof dialog.close === "function") {
+        dialog.close();
+    } else {
+        dialog.removeAttribute("open");
     }
 }
 
@@ -288,17 +340,22 @@ function normalizedState(state) {
         placed_tiles: state.placed_tiles || [],
         formed_words: state.formed_words || [],
         messages: state.messages || [],
+        players: state.players || state.public?.players || [],
     };
 }
 
 function render(state) {
     ui.state = normalizedState(state);
+    ui.playerId = ui.state.player_id || ui.playerId;
+    ui.playerName = ui.state.player_name || ui.playerName;
     renderSession();
     renderStatus();
+    renderPlayers();
     renderRack();
     renderWords();
     renderMessages();
     renderGrid();
+    renderWinnerAnnouncement();
 }
 
 function applyStateDiff(diff) {
@@ -366,11 +423,61 @@ function applyStateDiff(diff) {
         if (diff.validated_board) {
             applyValidatedBoard(state, diff.validated_board);
         }
-        state.message = diff.message || "Game complete.";
+        state.message = diff.message || `${winnerDisplayName(state)} wins!`;
         state.messages = [state.message];
     }
 
     render(state);
+}
+
+function applyPublicState(publicState) {
+    if (!ui.state || !publicState) {
+        return;
+    }
+
+    const state = { ...ui.state };
+    for (const field of [
+        "bag_count",
+        "is_game_over",
+        "winner_id",
+        "winner_name",
+        "mode",
+    ]) {
+        if (Object.hasOwn(publicState, field)) {
+            state[field] = publicState[field];
+        }
+    }
+    if (Array.isArray(publicState.players)) {
+        state.players = publicState.players;
+    }
+
+    ui.state = normalizedState(state);
+    elements.bagCount.textContent = ui.state.bag_count;
+    renderPlayers();
+    renderStatus();
+    renderWinnerAnnouncement();
+}
+
+function applyPublicStateDiff(diff) {
+    if (!ui.state || !diff) {
+        return;
+    }
+
+    if (diff.type === "player_changed" && diff.player) {
+        const players = [...ui.state.players];
+        const index = players.findIndex((player) =>
+            player.player_id === diff.player.player_id
+        );
+        if (index >= 0) {
+            players[index] = diff.player;
+        } else {
+            players.push(diff.player);
+        }
+        applyPublicState({ ...diff, players });
+        return;
+    }
+
+    applyPublicState(diff);
 }
 
 function setPlacedTile(state, point, tile) {
@@ -519,6 +626,79 @@ function renderSession() {
     }
 }
 
+function winnerDisplayName(state = ui.state) {
+    if (!state) {
+        return "A player";
+    }
+    if (state.winner_name) {
+        return state.winner_name;
+    }
+    const winner = (state.players || []).find((player) =>
+        player.player_id === state.winner_id
+    );
+    return winner?.player_name || "A player";
+}
+
+function renderPlayers() {
+    const players = ui.state?.players || [];
+    elements.playersCount.textContent = players.length;
+    elements.playersList.innerHTML = "";
+
+    if (players.length === 0) {
+        const item = document.createElement("li");
+        item.className = "empty-player-list";
+        item.textContent = "Waiting for players...";
+        elements.playersList.append(item);
+        return;
+    }
+
+    for (const player of players) {
+        const item = document.createElement("li");
+        const isCurrentPlayer = player.player_id === ui.playerId;
+        const isWinner = player.player_id === ui.state.winner_id;
+        item.classList.toggle("current-player", isCurrentPlayer);
+        item.classList.toggle("winner", isWinner);
+
+        const name = document.createElement("span");
+        name.className = "player-name";
+        name.textContent = player.player_name || "Player";
+        item.append(name);
+
+        if (isCurrentPlayer) {
+            const you = document.createElement("span");
+            you.className = "player-you";
+            you.textContent = "You";
+            item.append(you);
+        }
+
+        const progress = document.createElement("span");
+        progress.className = "player-progress";
+        if (isWinner) {
+            progress.textContent = "Winner";
+        } else {
+            const count = Number(player.rack_count) || 0;
+            progress.textContent = `${count} tile${count === 1 ? "" : "s"} left`;
+        }
+        item.append(progress);
+        elements.playersList.append(item);
+    }
+}
+
+function renderWinnerAnnouncement() {
+    if (!ui.state?.is_game_over) {
+        return;
+    }
+
+    const winnerName = winnerDisplayName();
+    const winnerKey = ui.state.winner_id || winnerName;
+    if (ui.dismissedWinner === winnerKey || elements.winnerDialog.open) {
+        return;
+    }
+
+    elements.winnerMessage.textContent = `${winnerName} wins!`;
+    openDialog(elements.winnerDialog);
+}
+
 function renderMessage(message) {
     if (!elements.homeView.hidden) {
         setLobbyMessage(message);
@@ -545,7 +725,7 @@ function renderStatus() {
     elements.status.classList.toggle("invalid", !ui.state.is_valid && !isStale);
     elements.status.classList.toggle("complete", ui.state.is_game_over);
     elements.status.textContent = ui.state.is_game_over
-        ? "Complete"
+        ? `${winnerDisplayName()} wins`
         : hasKnownWords ? "Partial" : isStale ? "Unvalidated" : ui.state.is_valid ? "Valid" : "Invalid";
 }
 
@@ -979,18 +1159,57 @@ async function dumpSelectedTile() {
     }
 }
 
+elements.playersToggle.addEventListener("click", () => {
+    setPlayersOpen(!elements.playersDrawer.classList.contains("open"));
+});
+
+for (const button of document.querySelectorAll("[data-open-help]")) {
+    button.addEventListener("click", () => openDialog(elements.helpDialog));
+}
+
+for (const button of document.querySelectorAll("[data-close-dialog]")) {
+    button.addEventListener("click", () => closeDialog(button.closest("dialog")));
+}
+
+for (const dialog of document.querySelectorAll("dialog")) {
+    dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) {
+            closeDialog(dialog);
+        }
+    });
+}
+
+elements.winnerDialog.addEventListener("close", () => {
+    if (ui.state?.is_game_over) {
+        ui.dismissedWinner = ui.state.winner_id || winnerDisplayName();
+    }
+});
+
 elements.settingsToggle.addEventListener("click", () => {
     setSettingsOpen(elements.newGameSettings.hidden);
 });
 
+elements.nicknameInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && elements.joinInput.value.trim()) {
+        event.preventDefault();
+        elements.joinForm.requestSubmit();
+    }
+});
+
 elements.customForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const playerName = requiredPlayerName();
+    if (!playerName) {
+        return;
+    }
     ui.selected = { x: 0, y: 0 };
     ui.inviteUrl = null;
+    ui.pendingPlayerName = playerName;
     setLobbyMessage("Creating custom match...", true);
     const response = await emitAction("create_game", {
         mode: "custom",
         letters: elements.customLetters.value,
+        player_name: playerName,
     });
     if (!response.success) {
         setLobbyMessage(response.message || "Could not create the match.");
@@ -998,10 +1217,18 @@ elements.customForm.addEventListener("submit", async (event) => {
 });
 
 elements.randomButton.addEventListener("click", async () => {
+    const playerName = requiredPlayerName();
+    if (!playerName) {
+        return;
+    }
     ui.selected = { x: 0, y: 0 };
     ui.inviteUrl = null;
+    ui.pendingPlayerName = playerName;
     setLobbyMessage("Creating match...", true);
-    const response = await emitAction("create_game", { mode: "random" });
+    const response = await emitAction("create_game", {
+        mode: "random",
+        player_name: playerName,
+    });
     if (!response.success) {
         setLobbyMessage(response.message || "Could not create the match.");
     }
@@ -1009,6 +1236,10 @@ elements.randomButton.addEventListener("click", async () => {
 
 elements.joinForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const playerName = requiredPlayerName();
+    if (!playerName) {
+        return;
+    }
     const gameId = gameIdFromInput(elements.joinInput.value);
     if (!gameId) {
         setLobbyMessage("Enter a game ID or an invite link containing one.");
@@ -1016,10 +1247,12 @@ elements.joinForm.addEventListener("submit", async (event) => {
     }
 
     const saved = savedSession();
+    ui.pendingPlayerName = playerName;
     setLobbyMessage("Joining match...", true);
     const response = await emitAction("join_game", {
         game_id: gameId,
         player_id: saved && saved.gameId === gameId ? saved.playerId : null,
+        player_name: playerName,
     });
     if (!response.success) {
         setLobbyMessage(response.message || "Could not join the match.");
@@ -1044,12 +1277,19 @@ document.addEventListener("dragend", () => {
 });
 
 document.addEventListener("keydown", async (event) => {
-    if (elements.gameView.hidden) {
+    if (document.querySelector("dialog[open]") || elements.gameView.hidden) {
         return;
     }
 
     const activeTag = document.activeElement && document.activeElement.tagName;
     if (activeTag === "INPUT" || activeTag === "TEXTAREA") {
+        return;
+    }
+
+    if (event.key === "Escape" && elements.playersDrawer.classList.contains("open")) {
+        event.preventDefault();
+        setPlayersOpen(false);
+        elements.playersToggle.focus();
         return;
     }
 
@@ -1107,13 +1347,26 @@ function initializeSocket() {
         const gameId = params.get("game");
         const saved = savedSession();
         if (gameId) {
-            setLobbyMessage("Joining match...", true);
-            const response = await emitAction("join_game", {
-                game_id: gameId,
-                player_id: saved && saved.gameId === gameId ? saved.playerId : null,
-            });
-            if (!response.success) {
-                setLobbyMessage(response.message || "Could not join the match.");
+            elements.joinInput.value = gameId;
+            if (
+                saved
+                && saved.gameId === gameId
+                && saved.playerId
+                && saved.playerName
+            ) {
+                ui.pendingPlayerName = saved.playerName || null;
+                setLobbyMessage("Rejoining match...", true);
+                const response = await emitAction("join_game", {
+                    game_id: gameId,
+                    player_id: saved.playerId,
+                    player_name: saved.playerName || null,
+                });
+                if (!response.success) {
+                    setLobbyMessage(response.message || "Could not join the match.");
+                }
+            } else {
+                setLobbyMessage("Invite ready. Choose a nickname to join the match.", true);
+                elements.nicknameInput.focus();
             }
         } else {
             clearLobbyMessage();
@@ -1123,8 +1376,13 @@ function initializeSocket() {
         logIncomingTiming("joined_game", data);
         ui.gameId = data.game_id;
         ui.playerId = data.player_id;
+        ui.playerName = data.player_name || ui.pendingPlayerName;
         ui.inviteUrl = data.invite_url || inviteUrl(data.game_id);
-        saveSession(ui.gameId, ui.playerId);
+        saveSession(ui.gameId, ui.playerId, ui.playerName);
+        if (ui.playerName) {
+            elements.nicknameInput.value = ui.playerName;
+        }
+        ui.pendingPlayerName = null;
         showGameView(ui.gameId);
     });
     ui.socket.on("state", (state) => {
@@ -1139,10 +1397,25 @@ function initializeSocket() {
         applyStateDiff(diff);
         logRenderTiming("state_diff", diff, renderStartedAt);
     });
+    ui.socket.on("public_state", (state) => {
+        applyPublicState(state);
+    });
+    ui.socket.on("public_state_diff", (diff) => {
+        applyPublicStateDiff(diff);
+    });
     ui.socket.on("action_error", (data) => {
         logIncomingTiming("action_error", data);
         renderMessage(data.message || "Action failed.");
     });
+}
+
+const initialSession = savedSession();
+if (initialSession?.playerName) {
+    elements.nicknameInput.value = initialSession.playerName;
+}
+const initialGameId = new URLSearchParams(window.location.search).get("game");
+if (initialGameId) {
+    elements.joinInput.value = initialGameId;
 }
 
 initializeSocket();

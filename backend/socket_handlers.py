@@ -124,6 +124,7 @@ def register_socket_handlers(
                 raise ValueError("Game id is required.")
 
             player_id = payload.get("player_id")
+            requested_player_name = payload.get("player_name")
             player_state = None
             with store.lock(game_id):
                 session = _session(store, game_id)
@@ -134,7 +135,18 @@ def register_socket_handlers(
                         player_state = None
 
                 if player_state is None:
-                    player_state = session.add_player(payload.get("player_name"))
+                    player_state = session.add_player(requested_player_name)
+                elif (
+                    requested_player_name is not None
+                    and (
+                        not isinstance(requested_player_name, str)
+                        or requested_player_name.strip()
+                    )
+                ):
+                    player_state = session.rename_player(
+                        player_state.player.id,
+                        requested_player_name,
+                    )
 
                 store.save(session)
 
@@ -443,10 +455,12 @@ def _emit_joined(
 
 
 def _ack(session: GameSession, player_id: UUID) -> dict:
+    player_state = session.get_player_state(player_id)
     return {
         "success": True,
         "game_id": str(session.game_id),
         "player_id": str(player_id),
+        "player_name": player_state.player.player_name,
         "invite_url": _invite_url(session),
     }
 
@@ -530,7 +544,7 @@ def _emit_peel_diffs(
                 "is_game_over": True,
                 "winner_id": diff["winner_id"],
                 "winner_name": diff["winner_name"],
-                "message": "Game complete.",
+                "message": f"{diff['winner_name']} wins!",
             }
             if player_state.player.id == peeling_player_id:
                 payload["validated_board"] = player_state.board.to_state()

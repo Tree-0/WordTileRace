@@ -74,10 +74,11 @@ matches the deployable runtime shape more closely than the in-memory local run.
 ## Multiplayer
 
 Opening the app shows a lobby where you can create a random or custom game, or
-join one by pasting its game ID or invite URL. Opening an invite URL joins that
-game directly. Gameplay actions are sent over Socket.IO to the server, where
-`GameSession` validates and applies them before broadcasting updated private
-player state.
+join one by pasting its game ID or invite URL. Players choose a nickname before
+entering a match; opening an invite URL prompts new players for one and reconnects
+returning players automatically. Gameplay actions are sent over Socket.IO to the
+server, where `GameSession` validates and applies them before broadcasting updated
+private player state. The collapsible tab on the left shows everyone in the match.
 
 The sidebar shows the current raw game id and has a copy button for a full
 invite URL:
@@ -86,8 +87,8 @@ invite URL:
 https://your-host.example/?game=<game-id>
 ```
 
-The browser stores `{game_id, player_id}` in local storage so refreshes and
-revisits can reconnect to the same player when the game still exists. Redis
+The browser stores `{gameId, playerId, playerName}` in local storage so refreshes
+and revisits can reconnect to the same player when the game still exists. Redis
 games expire after `GAME_TTL_SECONDS`, which defaults to 2 hours.
 
 ## Production Deployment

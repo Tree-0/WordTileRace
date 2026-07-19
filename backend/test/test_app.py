@@ -34,6 +34,10 @@ class AppTests(unittest.TestCase):
         self.assertIn(b'id="new-game-settings"', response.data)
         self.assertIn(b'id="game-view"', response.data)
         self.assertIn(b'id="home-button"', response.data)
+        self.assertIn(b'id="nickname-input"', response.data)
+        self.assertIn(b'id="players-drawer"', response.data)
+        self.assertIn(b'id="help-dialog"', response.data)
+        self.assertIn(b'id="winner-dialog"', response.data)
 
     def test_health_endpoint_returns_success(self):
         client = self.make_app().test_client()

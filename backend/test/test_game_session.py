@@ -40,6 +40,29 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(session.bag_count, 0)
         self.assertEqual(session.mode, "custom")
 
+    def test_players_get_normalized_or_default_names_in_public_state(self):
+        session = GameSession.new_game("BE", board_factory=make_board)
+
+        named_player = session.add_player("  Alice   Smith  ")
+        first_default = session.add_player()
+        second_default = session.add_player("   ")
+
+        self.assertEqual(named_player.player.player_name, "Alice Smith")
+        self.assertEqual(first_default.player.player_name, "Player 1")
+        self.assertEqual(second_default.player.player_name, "Player 2")
+        self.assertEqual(
+            [player["player_name"] for player in session.public_state()["players"]],
+            ["Alice Smith", "Player 1", "Player 2"],
+        )
+
+    def test_player_name_rejects_non_text_and_overlong_values(self):
+        session = GameSession.new_game("BE", board_factory=make_board)
+
+        with self.assertRaisesRegex(ValueError, "Nickname must be text"):
+            session.add_player({"name": "Alice"})
+        with self.assertRaisesRegex(ValueError, "24 characters or fewer"):
+            session.add_player("A" * 25)
+
     def test_board_actions_flow_through_session(self):
         session = GameSession.new_game("BE", board_factory=make_board)
         player_state = session.add_player("TestPlayer")
@@ -109,9 +132,17 @@ class GameSessionTests(unittest.TestCase):
         result = session.peel(player_state.player.id)
 
         self.assertEqual(result["type"], "game_over")
+        self.assertEqual(result["winner_name"], "Natha")
         self.assertTrue(session.is_game_over)
         self.assertEqual(session.winner_id, player_state.player.id)
-        self.assertTrue(session.private_state(player_state.player.id)["is_game_over"])
+        private_state = session.private_state(player_state.player.id)
+        self.assertTrue(private_state["is_game_over"])
+        self.assertEqual(private_state["winner_name"], "Natha")
+        self.assertEqual(session.public_state()["winner_name"], "Natha")
+        self.assertEqual(
+            private_state["messages"],
+            ["Natha wins! All tiles are placed in valid words."],
+        )
 
     def test_record_round_trip_preserves_game_state(self):
         session = GameSession.new_game("BEAN", board_factory=make_board)

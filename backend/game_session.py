@@ -19,6 +19,7 @@ from backend.tile_bag import (
 
 
 BoardFactory = Callable[[Any], Board]
+MAX_PLAYER_NAME_LENGTH = 24
 
 
 def _point_payload(point: Point) -> dict[str, int]:
@@ -103,6 +104,11 @@ class GameSession:
             return None
         return self.player_state.get(self.winner_id)
 
+    @property
+    def winner_name(self) -> str | None:
+        winner = self.winner
+        return winner.player.player_name if winner is not None else None
+
     def add_player(self, player_name: str | None = None) -> PlayerState:
         if self.custom_rack is not None:
             tiles = self.custom_rack.copy()
@@ -110,12 +116,24 @@ class GameSession:
             tiles = draw_tiles(self.bag, DEFAULT_RANDOM_DRAW_COUNT, self.rng)
 
         player_state = PlayerState.new_player_state(
-            Player(player_name),
+            Player(self._resolved_player_name(player_name)),
             tiles,
             self.board_factory,
             self.mode,
         )
         self.player_state[player_state.player.id] = player_state
+        return player_state
+
+    def rename_player(
+        self,
+        player_id: UUID | str,
+        player_name: object,
+    ) -> PlayerState:
+        player_state = self._get_player_state(player_id)
+        normalized_name = self._normalize_player_name(player_name)
+        if normalized_name is None:
+            raise ValueError("Nickname is required.")
+        player_state.player.player_name = normalized_name
         return player_state
 
     def get_player_state(self, player_id: UUID | str) -> PlayerState:
@@ -216,7 +234,7 @@ class GameSession:
                 "drawn_by_player": {},
                 "bag_count": self.bag_count,
                 "winner_id": str(self.winner_id),
-                "winner_name": player_state.player.player_name,
+                "winner_name": self.winner_name,
             }
 
         player_count = len(self.player_state)
@@ -288,11 +306,7 @@ class GameSession:
             ),
             "is_game_over": self.is_game_over,
             "winner_id": str(self.winner_id) if self.winner_id else None,
-            "winner_name": (
-                self.winner.player.player_name
-                if self.winner is not None
-                else None
-            ),
+            "winner_name": self.winner_name,
             "players": self._public_players(),
             "public": self.public_state(),
         })
@@ -310,11 +324,7 @@ class GameSession:
             "bag_count": self.bag_count,
             "is_game_over": self.is_game_over,
             "winner_id": str(self.winner_id) if self.winner_id else None,
-            "winner_name": (
-                self.winner.player.player_name
-                if self.winner is not None
-                else None
-            ),
+            "winner_name": self.winner_name,
             "mode": self.mode,
             "players": self._public_players(),
         }
@@ -406,7 +416,7 @@ class GameSession:
                     bool(tile_record.get("is_wildcard", False)),
                 )
             player = Player(
-                player_record.get("player_name"),
+                session._resolved_player_name(player_record.get("player_name")),
                 UUID(str(player_record["player_id"])),
             )
             restored_player_state = PlayerState(player, board, mode)
@@ -419,9 +429,43 @@ class GameSession:
             player_state.to_public_state()
             for player_state in sorted(
                 self.player_state.values(),
-                key=lambda state: state.player.player_name or str(state.player.id),
+                key=lambda state: (
+                    (state.player.player_name or "").casefold(),
+                    str(state.player.id),
+                ),
             )
         ]
+
+    def _resolved_player_name(self, player_name: object) -> str:
+        normalized_name = self._normalize_player_name(player_name)
+        if normalized_name is not None:
+            return normalized_name
+
+        used_names = {
+            player_state.player.player_name.casefold()
+            for player_state in self.player_state.values()
+            if player_state.player.player_name
+        }
+        suffix = 1
+        while f"player {suffix}" in used_names:
+            suffix += 1
+        return f"Player {suffix}"
+
+    @staticmethod
+    def _normalize_player_name(player_name: object) -> str | None:
+        if player_name is None:
+            return None
+        if not isinstance(player_name, str):
+            raise ValueError("Nickname must be text.")
+
+        normalized_name = " ".join(player_name.split())
+        if not normalized_name:
+            return None
+        if len(normalized_name) > MAX_PLAYER_NAME_LENGTH:
+            raise ValueError(
+                f"Nickname must be {MAX_PLAYER_NAME_LENGTH} characters or fewer."
+            )
+        return normalized_name
 
     def _action_capabilities(self, player_state: PlayerState) -> dict:
         return {
@@ -472,7 +516,6 @@ class GameSession:
             raise ValueError("Invalid player id.") from None
 
     def _winner_message(self) -> str:
-        if self.winner is None:
+        if self.winner_name is None:
             return "Game complete."
-        name = self.winner.player.player_name or "A player"
-        return f"{name} won! All tiles are placed in valid words."
+        return f"{self.winner_name} wins! All tiles are placed in valid words."

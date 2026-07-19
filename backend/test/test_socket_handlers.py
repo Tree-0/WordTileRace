@@ -51,11 +51,23 @@ class SocketHandlerTests(unittest.TestCase):
         ack = self.emit_ack(client, "create_game", {
             "mode": "custom",
             "letters": "BE",
+            "player_name": "  Alice   Smith ",
         })
 
         self.assertTrue(ack["success"])
         self.assertIn("invite_url", ack)
+        self.assertEqual(ack["player_name"], "Alice Smith")
+        self.assertEqual(
+            store.get(ack["game_id"]).get_player_state(ack["player_id"]).player.player_name,
+            "Alice Smith",
+        )
         self.assertIsNotNone(store.get(ack["game_id"]))
+        joined_events = [
+            event["args"][0]
+            for event in client.get_received()
+            if event["name"] == "joined_game"
+        ]
+        self.assertEqual(joined_events[-1]["player_name"], "Alice Smith")
 
     def test_join_game_adds_second_player(self):
         app, store = self.make_app_and_store()
@@ -63,24 +75,38 @@ class SocketHandlerTests(unittest.TestCase):
         first_ack = self.emit_ack(first_client, "create_game", {
             "mode": "custom",
             "letters": "BE",
+            "player_name": "Alice",
         })
+        first_client.get_received()
         second_client = socketio.test_client(app)
 
         second_ack = self.emit_ack(second_client, "join_game", {
             "game_id": first_ack["game_id"],
+            "player_name": "Bob",
         })
 
         session = store.get(first_ack["game_id"])
         self.assertTrue(second_ack["success"])
+        self.assertEqual(second_ack["player_name"], "Bob")
         self.assertEqual(len(session.player_state), 2)
         self.assertNotEqual(first_ack["player_id"], second_ack["player_id"])
+        first_state_events = [
+            event["args"][0]
+            for event in first_client.get_received()
+            if event["name"] == "state"
+        ]
+        self.assertEqual(
+            [player["player_name"] for player in first_state_events[-1]["players"]],
+            ["Alice", "Bob"],
+        )
 
-    def test_join_game_reconnects_existing_player(self):
+    def test_join_game_reconnects_existing_player_and_updates_name(self):
         app, store = self.make_app_and_store()
         first_client = socketio.test_client(app)
         first_ack = self.emit_ack(first_client, "create_game", {
             "mode": "custom",
             "letters": "BE",
+            "player_name": "Alice",
         })
         first_client.disconnect()
         reconnect_client = socketio.test_client(app)
@@ -88,12 +114,75 @@ class SocketHandlerTests(unittest.TestCase):
         reconnect_ack = self.emit_ack(reconnect_client, "join_game", {
             "game_id": first_ack["game_id"],
             "player_id": first_ack["player_id"],
+            "player_name": "Different name",
         })
 
         session = store.get(first_ack["game_id"])
         self.assertTrue(reconnect_ack["success"])
         self.assertEqual(reconnect_ack["player_id"], first_ack["player_id"])
+        self.assertEqual(reconnect_ack["player_name"], "Different name")
         self.assertEqual(len(session.player_state), 1)
+        self.assertEqual(
+            session.get_player_state(first_ack["player_id"]).player.player_name,
+            "Different name",
+        )
+
+        reconnect_client.disconnect()
+        blank_name_client = socketio.test_client(app)
+        blank_name_ack = self.emit_ack(blank_name_client, "join_game", {
+            "game_id": first_ack["game_id"],
+            "player_id": first_ack["player_id"],
+            "player_name": "   ",
+        })
+
+        self.assertEqual(blank_name_ack["player_name"], "Different name")
+        self.assertEqual(len(store.get(first_ack["game_id"]).player_state), 1)
+
+    def test_game_over_diff_names_winner_for_every_player(self):
+        app, store = self.make_app_and_store()
+        first_client = socketio.test_client(app)
+        first_ack = self.emit_ack(first_client, "create_game", {
+            "mode": "custom",
+            "letters": "BE",
+            "player_name": "Alice",
+        })
+        second_client = socketio.test_client(app)
+        self.emit_ack(second_client, "join_game", {
+            "game_id": first_ack["game_id"],
+            "player_name": "Bob",
+        })
+        self.emit_ack(first_client, "place_tile", {
+            "x": 0,
+            "y": 0,
+            "char": "B",
+        })
+        self.emit_ack(first_client, "place_tile", {
+            "x": 1,
+            "y": 0,
+            "char": "E",
+        })
+        first_client.get_received()
+        second_client.get_received()
+
+        action_ack = self.emit_ack(first_client, "peel")
+
+        first_diffs = [
+            event["args"][0]
+            for event in first_client.get_received()
+            if event["name"] == "state_diff"
+        ]
+        second_diffs = [
+            event["args"][0]
+            for event in second_client.get_received()
+            if event["name"] == "state_diff"
+        ]
+        session = store.get(first_ack["game_id"])
+        self.assertTrue(action_ack["success"])
+        self.assertEqual(first_diffs[-1]["type"], "game_over")
+        self.assertEqual(first_diffs[-1]["winner_name"], "Alice")
+        self.assertEqual(first_diffs[-1]["message"], "Alice wins!")
+        self.assertEqual(second_diffs[-1]["winner_name"], "Alice")
+        self.assertEqual(session.public_state()["winner_name"], "Alice")
 
     def test_mutation_saves_and_emits_private_diff(self):
         app, store = self.make_app_and_store()
