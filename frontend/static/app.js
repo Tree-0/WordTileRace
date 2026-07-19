@@ -1,7 +1,11 @@
 const GRID_PADDING = 4;
 const MIN_GRID_SIZE = 13;
 const SESSION_STORAGE_KEY = "wordTileRaceSession";
-const SOCKET_TIMING_DEBUG = false;
+
+const SOCKET_TIMING_DEBUG =
+    new URLSearchParams(window.location.search).has("debugTiming") ||
+    window.localStorage.getItem("debugTiming") === "1";
+
 let copyFeedbackTimeout = null;
 
 const elements = {
