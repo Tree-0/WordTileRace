@@ -15,6 +15,7 @@ from .trie import Trie
 
 DICTIONARY_PATH = Path(__file__).with_name("dictionary.txt")
 TRIE_CACHE_PATH = Path(__file__).with_name("trie.pickle")
+_MEMORY_CACHE: dict[tuple[Path, Path], Trie] = {}
 
 
 def build_trie(dictionary_path: str | Path = DICTIONARY_PATH) -> Trie:
@@ -56,7 +57,12 @@ def load_or_build_trie(
 
     Set rebuild=True to force regeneration from the dictionary text file.
     """
+    dictionary_path = Path(dictionary_path)
     cache_path = Path(cache_path)
+    cache_key = (dictionary_path.resolve(), cache_path.resolve())
+
+    if not rebuild and cache_key in _MEMORY_CACHE:
+        return _MEMORY_CACHE[cache_key]
 
     if cache_path.exists() and not rebuild:
         try:
@@ -65,8 +71,10 @@ def load_or_build_trie(
             cached_trie = None
         else:
             if isinstance(cached_trie, Trie):
+                _MEMORY_CACHE[cache_key] = cached_trie
                 return cached_trie
 
     trie = build_trie(dictionary_path)
     save_trie(trie, cache_path)
+    _MEMORY_CACHE[cache_key] = trie
     return trie
