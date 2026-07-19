@@ -1,8 +1,43 @@
 # Word Tile Race
 
-An independent real-time word-tile web game built with a Python game model,
-Flask, Flask-SocketIO, Redis-ready session storage, and a vanilla JavaScript
+I played a word game with my friends and lost so badly that I made a tool to practice
+out of the depths of my pettiness. Then I realized that I needed to actually be able 
+to show my friends that I was now better than them, so I made it multiplayer.
+
+This is a real-time word-tile web game built with a Python game model,
+Flask, Flask-SocketIO, Redis session storage, and a vanilla JavaScript
 grid UI.
+
+
+## Game Rules
+
+Players place tiles on an open grid to form connected words. Words can only read
+left-to-right or top-to-bottom. A board is valid when every placed tile belongs
+to a formed word and every formed word exists in the dictionary.
+
+Each player has a separate board and rack. The game session owns the shared tile
+bag. When a player places every rack tile and has a valid board, they can peel
+to draw one tile for every player. A player can dump a rack tile while tiles
+remain in the bag; the dumped tile returns to the bag and that player draws up
+to three replacement tiles.
+
+The game ends when the bag is empty and a player has an empty rack with a valid
+board. As of now, there are no timers, no scores, and no saved info beyond the 
+scope of the current match (no player stats, streaks, etc.).
+
+## Controls
+
+- Click a grid cell to select it, or move cells with arrow keys.
+- Press `A-Z` to place that letter in the selected cell.
+  - Alternatively, drag a rack tile onto the grid to place it.
+- Press `Backspace`, `Escape`, or `Delete` to remove the selected tile.
+- Drag a placed tile to an empty cell to move it.
+- Drag a placed tile back to the rack to remove it.
+- Click `Peel` when it is enabled, or press `Space`, to draw one tile for every
+  player.
+- Click `Dump` below a rack tile to return it and draw replacements.
+  - Alternatively, dump the tile in the currently selected cell using
+    `Shift + Space`.
 
 ## Run Locally
 
@@ -38,9 +73,11 @@ matches the deployable runtime shape more closely than the in-memory local run.
 
 ## Multiplayer
 
-Opening the app creates or reconnects to a game and joins you as a player.
-Gameplay actions are sent over Socket.IO to the server, where `GameSession`
-validates and applies them before broadcasting updated private player state.
+Opening the app shows a lobby where you can create a random or custom game, or
+join one by pasting its game ID or invite URL. Opening an invite URL joins that
+game directly. Gameplay actions are sent over Socket.IO to the server, where
+`GameSession` validates and applies them before broadcasting updated private
+player state.
 
 The sidebar shows the current raw game id and has a copy button for a full
 invite URL:
@@ -55,8 +92,8 @@ games expire after `GAME_TTL_SECONDS`, which defaults to 2 hours.
 
 ## Production Deployment
 
-The MVP deployment target is one web process plus Redis. That is enough for a
-small friend group and roughly a handful of concurrent games. Redis stores game
+The MVP deployment is one web process plus Redis; enough for a small friend group
+and roughly a handful of concurrent games. Redis stores game
 records and also coordinates Socket.IO messages for future multi-process growth.
 
 Required environment variables:
@@ -82,52 +119,6 @@ Production command:
 gunicorn --worker-class gthread --threads ${WEB_THREADS:-20} --bind 0.0.0.0:${PORT:-5050} backend.main:app
 ```
 
-Human deployment checklist:
-
-- Choose a host that supports WebSockets.
-- Create a Redis instance and set `REDIS_URL`.
-- Set `SECRET_KEY` and `ALLOWED_ORIGINS`.
-- Deploy the Docker image or repo-based Docker build.
-- Point your domain to the host and enable HTTPS.
-- Verify two browsers or devices can join the same invite URL.
-
-## Game Rules
-
-Players place tiles on an open grid to form connected words. Words can only read
-left-to-right or top-to-bottom. A board is valid when every placed tile belongs
-to a formed word and every formed word exists in the dictionary.
-
-Each player has a separate board and rack. The game session owns the shared tile
-bag. When a player places every rack tile and has a valid board, they can peel
-to draw one tile for every player. A player can dump a rack tile while tiles
-remain in the bag; the dumped tile returns to the bag and that player draws up
-to three replacement tiles.
-
-The game ends when the bag is empty and a player has an empty rack with a valid
-board. It does not yet include timers, scoring, persistence beyond Redis TTL, or
-full official table-game rules.
-
-## IP Note
-
-This project is an independent word-tile game. It uses original code and UI
-assets and should not use official product names, logos, packaging, photos, or
-trade dress from existing commercial games. See `LEGAL_NOTES.md`.
-
-## Controls
-
-- Click a grid cell to select it.
-- Press `A-Z` to place that letter in the selected cell.
-  - Alternatively, drag a rack tile onto the grid to place it.
-- Press `Backspace`, `Escape`, or `Delete` to remove the selected tile.
-- Press arrow keys to move the selected cell.
-- Drag a placed tile to an empty cell to move it.
-- Drag a placed tile back to the rack to remove it.
-- Click `Peel` when it is enabled, or press `Space`, to draw one tile for every
-  player.
-- Click `Dump` below a rack tile to return it and draw replacements.
-  - Alternatively, dump the tile in the currently selected cell using
-    `Shift + Space`.
-
 ## Files
 
 - `backend/main.py`: Importable app entrypoint and local Socket.IO runner.
@@ -151,5 +142,4 @@ trade dress from existing commercial games. See `LEGAL_NOTES.md`.
   styling.
 - `Dockerfile`, `compose.yaml`: Containerized deployment and local Redis smoke
   run.
-- `LEGAL_NOTES.md`: Branding/IP caution for public hosting.
 - `requirements.txt`: Python dependencies.

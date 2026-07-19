@@ -1,7 +1,0 @@
-Will clean this up later, but some important notes about rules
-that influence functionality:
-
-1. Words can only be formed left-to-right and top-to-bottom.
-2. You cannot peel (add another letter to your set) until you have
-    formed valid words from your existing letters.
-3. You may "dump" at any time by giving up 1 letter and drawing 3 others.
