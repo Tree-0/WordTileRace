@@ -24,6 +24,10 @@
     box-sizing: border-box;
 }
 
+[hidden] {
+    display: none !important;
+}
+
 body {
     margin: 0;
     min-height: 100vh;
@@ -51,6 +55,26 @@ button:hover {
     background: var(--accent-strong);
 }
 
+.secondary-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--accent);
+    padding: 0 12px;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.secondary-button:hover {
+    border-color: var(--accent);
+    background: var(--cell);
+    color: var(--accent-strong);
+}
+
 input {
     border: 1px solid var(--line);
     border-radius: 6px;
@@ -58,6 +82,152 @@ input {
     padding: 0 10px;
     text-transform: uppercase;
     width: min(200px, 42vw);
+}
+
+.lobby-shell {
+    display: grid;
+    min-height: 100vh;
+    place-items: center;
+    padding: 24px;
+}
+
+.lobby-card {
+    width: min(760px, 100%);
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel);
+    box-shadow: 0 18px 48px rgb(32 33 36 / 8%);
+}
+
+.lobby-header {
+    display: grid;
+    justify-items: center;
+    border-bottom: 1px solid var(--line);
+    padding: 34px 28px 28px;
+    text-align: center;
+}
+
+.title-tiles {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 16px;
+}
+
+.title-tiles span {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    border: 1px solid var(--tile-edge);
+    border-radius: 5px;
+    background: var(--tile);
+    color: #3a2b00;
+    font-weight: 800;
+    box-shadow: 0 2px 0 var(--tile-edge);
+}
+
+.lobby-header h1 {
+    margin: 0;
+    font-size: clamp(2rem, 6vw, 3rem);
+    letter-spacing: -0.04em;
+}
+
+.lobby-header p,
+.lobby-action p {
+    color: var(--muted);
+}
+
+.lobby-header p {
+    margin: 10px 0 0;
+}
+
+.lobby-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.lobby-action {
+    padding: 26px 28px 30px;
+}
+
+.lobby-action + .lobby-action {
+    border-left: 1px solid var(--line);
+}
+
+.lobby-action h2 {
+    margin: 0;
+    font-size: 1.15rem;
+}
+
+.lobby-action > p {
+    min-height: 42px;
+    margin: 7px 0 18px;
+    font-size: 0.92rem;
+    line-height: 1.45;
+}
+
+.wide-button {
+    width: 100%;
+}
+
+.settings-toggle {
+    width: 100%;
+    margin-top: 10px;
+}
+
+.new-game-settings {
+    margin-top: 16px;
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+}
+
+.custom-game-form,
+.join-game-form {
+    display: grid;
+    gap: 10px;
+}
+
+.custom-game-form label {
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+
+.custom-game-form input,
+.join-game-form input {
+    width: 100%;
+    text-transform: none;
+}
+
+.field-help {
+    margin: -4px 0 0;
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+.lobby-status {
+    margin: 0;
+    border-top: 1px solid #e7aaa4;
+    background: var(--bad-bg);
+    color: var(--bad);
+    padding: 12px 28px;
+    text-align: center;
+}
+
+.lobby-status.pending {
+    border-top-color: var(--line);
+    background: var(--cell);
+    color: var(--muted);
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
 }
 
 .app-shell {
@@ -91,16 +261,15 @@ input {
     padding: 12px;
 }
 
-.new-game-form {
+.game-toolbar {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
 }
 
-.new-game-form label {
-    color: var(--muted);
-    font-size: 0.9rem;
+.home-button {
+    min-width: 72px;
 }
 
 .status-pill {
@@ -463,5 +632,41 @@ input {
 
     .play-area {
         min-height: 66vh;
+    }
+}
+
+@media (max-width: 620px) {
+    .lobby-shell {
+        place-items: start center;
+        padding: 12px;
+    }
+
+    .lobby-header {
+        padding: 28px 20px 24px;
+    }
+
+    .lobby-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .lobby-action {
+        padding: 22px 20px;
+    }
+
+    .lobby-action + .lobby-action {
+        border-top: 1px solid var(--line);
+        border-left: 0;
+    }
+
+    .lobby-action > p {
+        min-height: 0;
+    }
+
+    .game-id-row {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .game-id-row button {
+        grid-column: 1 / -1;
     }
 }

@@ -28,6 +28,12 @@ class AppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Word Tile Race", response.data)
+        self.assertIn(b'id="home-view"', response.data)
+        self.assertIn(b'id="random-game-button"', response.data)
+        self.assertIn(b'id="join-game-form"', response.data)
+        self.assertIn(b'id="new-game-settings"', response.data)
+        self.assertIn(b'id="game-view"', response.data)
+        self.assertIn(b'id="home-button"', response.data)
 
     def test_health_endpoint_returns_success(self):
         client = self.make_app().test_client()

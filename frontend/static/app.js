@@ -5,9 +5,16 @@ const SOCKET_TIMING_DEBUG = false;
 let copyFeedbackTimeout = null;
 
 const elements = {
+    homeView: document.querySelector("#home-view"),
+    gameView: document.querySelector("#game-view"),
     customForm: document.querySelector("#custom-game-form"),
     customLetters: document.querySelector("#custom-letters"),
     randomButton: document.querySelector("#random-game-button"),
+    settingsToggle: document.querySelector("#settings-toggle"),
+    newGameSettings: document.querySelector("#new-game-settings"),
+    joinForm: document.querySelector("#join-game-form"),
+    joinInput: document.querySelector("#join-game-input"),
+    lobbyStatus: document.querySelector("#lobby-status"),
     status: document.querySelector("#board-status"),
     boardWrap: document.querySelector(".board-wrap"),
     grid: document.querySelector("#grid"),
@@ -161,6 +168,59 @@ function inviteUrl(gameId) {
     url.hash = "";
     url.searchParams.set("game", gameId);
     return url.toString();
+}
+
+function gameIdFromInput(value) {
+    const trimmed = String(value || "").trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    try {
+        const url = new URL(trimmed, window.location.href);
+        const linkedGameId = url.searchParams.get("game");
+        if (linkedGameId && linkedGameId.trim()) {
+            return linkedGameId.trim();
+        }
+    } catch (error) {
+        // Malformed links fall through to the raw-ID check below.
+    }
+
+    const looksLikeLink = /^(?:https?:\/\/|\/|\?)/i.test(trimmed);
+    return looksLikeLink ? null : trimmed;
+}
+
+function setLobbyMessage(message, pending = false) {
+    elements.lobbyStatus.textContent = message;
+    elements.lobbyStatus.classList.toggle("pending", pending);
+    elements.lobbyStatus.hidden = !message;
+}
+
+function clearLobbyMessage() {
+    setLobbyMessage("");
+}
+
+function showGameView(gameId) {
+    elements.homeView.hidden = true;
+    elements.gameView.hidden = false;
+    clearLobbyMessage();
+
+    if (gameId) {
+        const url = new URL(window.location.href);
+        url.search = "";
+        url.hash = "";
+        url.searchParams.set("game", gameId);
+        window.history.replaceState({}, "", url);
+    }
+}
+
+function setSettingsOpen(isOpen) {
+    elements.newGameSettings.hidden = !isOpen;
+    elements.settingsToggle.setAttribute("aria-expanded", String(isOpen));
+    elements.settingsToggle.textContent = isOpen ? "Hide custom rules" : "Custom rules";
+    if (isOpen) {
+        elements.customLetters.focus();
+    }
 }
 
 async function requestJson(path) {
@@ -460,6 +520,11 @@ function renderSession() {
 }
 
 function renderMessage(message) {
+    if (!elements.homeView.hidden) {
+        setLobbyMessage(message);
+        return;
+    }
+
     if (!ui.state) {
         elements.status.classList.add("invalid");
         elements.status.textContent = "Disconnected";
@@ -914,20 +979,51 @@ async function dumpSelectedTile() {
     }
 }
 
+elements.settingsToggle.addEventListener("click", () => {
+    setSettingsOpen(elements.newGameSettings.hidden);
+});
+
 elements.customForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     ui.selected = { x: 0, y: 0 };
     ui.inviteUrl = null;
-    await emitAction("create_game", {
+    setLobbyMessage("Creating custom match...", true);
+    const response = await emitAction("create_game", {
         mode: "custom",
         letters: elements.customLetters.value,
     });
+    if (!response.success) {
+        setLobbyMessage(response.message || "Could not create the match.");
+    }
 });
 
 elements.randomButton.addEventListener("click", async () => {
     ui.selected = { x: 0, y: 0 };
     ui.inviteUrl = null;
-    await emitAction("create_game", { mode: "random" });
+    setLobbyMessage("Creating match...", true);
+    const response = await emitAction("create_game", { mode: "random" });
+    if (!response.success) {
+        setLobbyMessage(response.message || "Could not create the match.");
+    }
+});
+
+elements.joinForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const gameId = gameIdFromInput(elements.joinInput.value);
+    if (!gameId) {
+        setLobbyMessage("Enter a game ID or an invite link containing one.");
+        return;
+    }
+
+    const saved = savedSession();
+    setLobbyMessage("Joining match...", true);
+    const response = await emitAction("join_game", {
+        game_id: gameId,
+        player_id: saved && saved.gameId === gameId ? saved.playerId : null,
+    });
+    if (!response.success) {
+        setLobbyMessage(response.message || "Could not join the match.");
+    }
 });
 
 elements.peelButton.addEventListener("click", peel);
@@ -948,6 +1044,10 @@ document.addEventListener("dragend", () => {
 });
 
 document.addEventListener("keydown", async (event) => {
+    if (elements.gameView.hidden) {
+        return;
+    }
+
     const activeTag = document.activeElement && document.activeElement.tagName;
     if (activeTag === "INPUT" || activeTag === "TEXTAREA") {
         return;
@@ -1007,20 +1107,16 @@ function initializeSocket() {
         const gameId = params.get("game");
         const saved = savedSession();
         if (gameId) {
-            await emitAction("join_game", {
+            setLobbyMessage("Joining match...", true);
+            const response = await emitAction("join_game", {
                 game_id: gameId,
                 player_id: saved && saved.gameId === gameId ? saved.playerId : null,
             });
-        } else if (saved && saved.gameId && saved.playerId) {
-            const response = await emitAction("join_game", {
-                game_id: saved.gameId,
-                player_id: saved.playerId,
-            });
             if (!response.success) {
-                await emitAction("create_game", { mode: "random" });
+                setLobbyMessage(response.message || "Could not join the match.");
             }
         } else {
-            await emitAction("create_game", { mode: "random" });
+            clearLobbyMessage();
         }
     });
     ui.socket.on("joined_game", (data) => {
@@ -1029,6 +1125,7 @@ function initializeSocket() {
         ui.playerId = data.player_id;
         ui.inviteUrl = data.invite_url || inviteUrl(data.game_id);
         saveSession(ui.gameId, ui.playerId);
+        showGameView(ui.gameId);
     });
     ui.socket.on("state", (state) => {
         logIncomingTiming("state", state);
