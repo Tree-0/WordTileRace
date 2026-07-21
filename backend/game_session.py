@@ -227,7 +227,8 @@ class GameSession:
         if not player_state.can_peel_board:
             raise ValueError("Player cannot peel.")
 
-        if self.bag_count == 0:
+        player_count = len(self.player_state)
+        if self.bag_count < player_count:
             self.winner_id = player_state.player.id
             return {
                 "type": "game_over",
@@ -236,10 +237,6 @@ class GameSession:
                 "winner_id": str(self.winner_id),
                 "winner_name": self.winner_name,
             }
-
-        player_count = len(self.player_state)
-        if self.bag_count < player_count:
-            raise ValueError("Fewer tiles in bag than number of players. Not peeling.")
 
         drawn_by_player = {}
         for other_player_state in self.player_state.values():
@@ -494,7 +491,7 @@ class GameSession:
         if not board_ready:
             return False
 
-        return self.bag_count == 0 or self.bag_count >= len(self.player_state)
+        return True
 
     def _ensure_active(self) -> None:
         if self.is_game_over:

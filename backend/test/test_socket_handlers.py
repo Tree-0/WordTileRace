@@ -151,6 +151,9 @@ class SocketHandlerTests(unittest.TestCase):
             "game_id": first_ack["game_id"],
             "player_name": "Bob",
         })
+        session = store.get(first_ack["game_id"])
+        session.bag = Counter({"Z": 1})
+        store.save(session)
         self.emit_ack(first_client, "place_tile", {
             "x": 0,
             "y": 0,
@@ -161,7 +164,13 @@ class SocketHandlerTests(unittest.TestCase):
             "y": 0,
             "char": "E",
         })
-        first_client.get_received()
+        placed_diffs = [
+            event["args"][0]
+            for event in first_client.get_received()
+            if event["name"] == "state_diff"
+            and event["args"][0]["type"] == "tile_placed"
+        ]
+        self.assertTrue(placed_diffs[-1]["can_peel"])
         second_client.get_received()
 
         action_ack = self.emit_ack(first_client, "peel")
@@ -183,6 +192,7 @@ class SocketHandlerTests(unittest.TestCase):
         self.assertEqual(first_diffs[-1]["message"], "Alice wins!")
         self.assertEqual(second_diffs[-1]["winner_name"], "Alice")
         self.assertEqual(session.public_state()["winner_name"], "Alice")
+        self.assertEqual(session.bag_count, 1)
 
     def test_mutation_saves_and_emits_private_diff(self):
         app, store = self.make_app_and_store()

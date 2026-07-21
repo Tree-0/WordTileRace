@@ -144,6 +144,28 @@ class GameSessionTests(unittest.TestCase):
             ["Natha wins! All tiles are placed in valid words."],
         )
 
+    def test_winner_detected_when_bag_has_fewer_tiles_than_players(self):
+        session = GameSession.new_game(
+            rng=random.Random(1),
+            board_factory=make_board,
+        )
+        player_state = session.add_player("Natha")
+        session.add_player("Opponent")
+        player_state.board.unplaced_letters = Counter({"B": 1, "E": 1})
+        player_state.board.place_tile("B", 0, 0)
+        player_state.board.place_tile("E", 1, 0)
+        session.bag = Counter({"Z": 1})
+
+        self.assertTrue(session.private_state(player_state.player.id)["can_peel"])
+
+        result = session.peel(player_state.player.id)
+
+        self.assertEqual(result["type"], "game_over")
+        self.assertEqual(result["bag_count"], 1)
+        self.assertEqual(result["winner_name"], "Natha")
+        self.assertEqual(session.bag, Counter({"Z": 1}))
+        self.assertTrue(session.is_game_over)
+
     def test_record_round_trip_preserves_game_state(self):
         session = GameSession.new_game("BEAN", board_factory=make_board)
         player_state = session.add_player("Natha")
