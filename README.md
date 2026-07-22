@@ -98,9 +98,9 @@ games expire after `GAME_TTL_SECONDS`, which defaults to 2 hours.
 
 ## Production Deployment
 
-The MVP deployment is one web process plus Redis; enough for a small friend group
+Currently deploying one web process and one Redis instance, which is enough for a small friend group
 and roughly a handful of concurrent games. Redis stores game
-records and also coordinates Socket.IO messages for future multi-process growth.
+records and also coordinates Socket.IO messages for future scaling.
 
 Required environment variables:
 
