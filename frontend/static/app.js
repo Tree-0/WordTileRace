@@ -379,6 +379,7 @@ function normalizedState(state) {
         formed_words: state.formed_words || [],
         messages: state.messages || [],
         players: state.players || state.public?.players || [],
+        is_connected: typeof state.is_connected === "boolean" ? state.is_connected : true,
     };
 }
 
@@ -599,11 +600,16 @@ function applyPartialValidation(state, partialValidation) {
     state.formed_words = nextWords;
     state.validation_stale = true;
     state.is_valid = false;
+    if (typeof partialValidation.is_connected === "boolean") {
+        state.is_connected = partialValidation.is_connected;
+    }
 
     const invalidWords = nextWords
         .filter((detail) => !detail.is_valid)
         .map((detail) => detail.word);
-    if (invalidWords.length > 0) {
+    if (!state.is_connected) {
+        state.message = "All placed tiles must be connected.";
+    } else if (invalidWords.length > 0) {
         state.message = `Invalid known words: ${[...new Set(invalidWords)].sort().join(", ")}.`;
     } else if (nextWords.length > 0) {
         state.message = "Changed words checked. Peel will validate the whole board.";
@@ -635,6 +641,9 @@ function applyValidatedBoard(state, boardState) {
         points: detail.points.map((point) => ({ ...point })),
     }));
     state.is_valid = Boolean(boardState.is_valid);
+    if (typeof boardState.is_connected === "boolean") {
+        state.is_connected = boardState.is_connected;
+    }
     state.validation_stale = false;
 }
 
@@ -1106,15 +1115,13 @@ function renderBoardTile(tile, x, y, coverage) {
 
     const key = pointKey(x, y);
     const covered = coverage.get(key);
-    if (covered && covered.invalid) {
+    if (!ui.state.is_connected) {
+        tileElement.classList.add("disconnected");
+    } else if (covered && covered.invalid) {
         tileElement.classList.add("invalid");
     } else if (covered && covered.valid) {
         tileElement.classList.add("valid");
     } else if (!covered && ui.state.is_valid) {
-        tileElement.classList.add("valid");
-    } else if (!covered) {
-        tileElement.classList.add("orphan");
-    } else {
         tileElement.classList.add("valid");
     }
 

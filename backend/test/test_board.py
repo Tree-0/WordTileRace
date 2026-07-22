@@ -101,6 +101,39 @@ class BoardTests(unittest.TestCase):
 
         self.assertTrue(board.is_valid_board())
 
+    def test_connectivity_updates_when_an_edit_splits_the_board(self):
+        board = self.make_board("BEA")
+        board.place_tile("B", 0, 0)
+        board.place_tile("E", 1, 0)
+        board.place_tile("A", 2, 0)
+
+        self.assertTrue(board.is_connected())
+
+        board.remove_letter(1, 0)
+
+        self.assertFalse(board.is_connected())
+        partial_state = board.get_formed_word_details_around_points([Point(1, 0)])
+        self.assertFalse(partial_state["is_connected"])
+
+    def test_disjoint_valid_words_report_connectivity_error(self):
+        board = self.make_board("BEAN", valid_words={"BE", "AN"})
+        board.place_tile("B", 0, 0)
+        board.place_tile("E", 1, 0)
+        board.place_tile("A", 4, 0)
+        board.place_tile("N", 5, 0)
+
+        state = board.to_state()
+
+        self.assertFalse(state["is_connected"])
+        self.assertFalse(state["is_valid"])
+        self.assertEqual(
+            {detail["word"] for detail in state["formed_words"]},
+            {"BE", "AN"},
+        )
+        self.assertTrue(all(detail["is_valid"] for detail in state["formed_words"]))
+        self.assertIn("All placed tiles must be connected.", state["messages"])
+        self.assertNotIn("All formed words are valid.", state["messages"])
+
     def test_is_valid_board_rejects_invalid_formed_words(self):
         board = self.make_board("BX", valid_words={"BE"})
         board.place_tile("B", 0, 0)
@@ -209,6 +242,7 @@ class BoardTests(unittest.TestCase):
             ],
         )
         self.assertTrue(state["is_valid"])
+        self.assertTrue(state["is_connected"])
         self.assertEqual(state["formed_words"][0]["word"], "BE")
 
     def test_partial_validation_checks_only_words_around_point(self):
@@ -225,6 +259,7 @@ class BoardTests(unittest.TestCase):
             {("BE", "horizontal"), ("BAT", "vertical")},
         )
         self.assertTrue(all(detail["is_valid"] for detail in state["formed_words"]))
+        self.assertTrue(state["is_connected"])
         self.assertIn({"x": 0, "y": 0}, state["affected_points"])
 
     def test_partial_validation_only_marks_directly_changed_points(self):

@@ -230,7 +230,32 @@ class Board:
             ],
             "changed_points": self.__serialize_points(changed_points),
             "affected_points": self.__serialize_points(changed_points),
+            "is_connected": self.is_connected(),
         }
+
+    def is_connected(self) -> bool:
+        """Return whether all placed tiles form one orthogonally connected group."""
+        if not self.placed_tiles:
+            return True
+
+        unvisited = set(self.placed_tiles)
+        start = next(iter(unvisited))
+        unvisited.remove(start)
+        stack = [start]
+        while stack:
+            point = stack.pop()
+            x, y = point.x, point.y
+            for neighbor in (
+                Point(x + 1, y),
+                Point(x - 1, y),
+                Point(x, y + 1),
+                Point(x, y - 1),
+            ):
+                if neighbor in unvisited:
+                    unvisited.remove(neighbor)
+                    stack.append(neighbor)
+
+        return not unvisited
 
     def is_valid_board(self) -> bool:
         """
@@ -238,48 +263,45 @@ class Board:
         and therefore acceptable. All tiles must also be connected. 
         """
         formed_word_details = self.get_formed_word_details()
-        return self.__is_valid_from_details(formed_word_details)
+        return self.__is_valid_from_details(
+            formed_word_details,
+            is_connected=self.is_connected(),
+        )
 
     def to_fast_state(self) -> dict:
         """Serialize board state without word scans or dictionary validation."""
         return {
             "rack": self.__serialized_rack(),
             "placed_tiles": self.__serialized_placed_tiles(),
+            "is_connected": self.is_connected(),
         }
 
     def to_state(self) -> dict:
         """Serialize board state for the browser UI."""
         formed_word_details = self.get_formed_word_details()
+        fast_state = self.to_fast_state()
+        is_connected = fast_state["is_connected"]
         return {
-            **self.to_fast_state(),
+            **fast_state,
             "formed_words": formed_word_details,
-            "is_valid": self.__is_valid_from_details(formed_word_details),
-            "messages": self.__validation_messages(formed_word_details),
+            "is_valid": self.__is_valid_from_details(
+                formed_word_details,
+                is_connected=is_connected,
+            ),
+            "messages": self.__validation_messages(
+                formed_word_details,
+                is_connected=is_connected,
+            ),
         }
 
-    def __is_valid_from_details(self, formed_word_details: list[dict]) -> bool:
-        # Tiles must be adjacent to one another, either up-down or left-right.
-        # Board is invalid if sections are disjoint.
-        if self.placed_tiles:
-            unvisited = set(self.placed_tiles)
-            start = next(iter(unvisited))
-            unvisited.remove(start)
-            stack = [start]
-            while stack:
-                point = stack.pop()
-                x, y = point.x, point.y
-                for neighbor in (
-                    Point(x + 1, y),
-                    Point(x - 1, y),
-                    Point(x, y + 1),
-                    Point(x, y - 1),
-                ):
-                    if neighbor in unvisited:
-                        unvisited.remove(neighbor)
-                        stack.append(neighbor)
-
-            if unvisited:
-                return False
+    def __is_valid_from_details(
+        self,
+        formed_word_details: list[dict],
+        *,
+        is_connected: bool,
+    ) -> bool:
+        if not is_connected:
+            return False
 
         if self.placed_tiles and not formed_word_details:
             return False
@@ -362,12 +384,22 @@ class Board:
             return 1, 0
         return 0, 1
 
-    def __validation_messages(self, formed_word_details: list[dict]) -> list[str]:
+    def __validation_messages(
+        self,
+        formed_word_details: list[dict],
+        *,
+        is_connected: bool,
+    ) -> list[str]:
         if not self.placed_tiles:
             return ["Place a tile to start."]
 
+        messages = []
+        if not is_connected:
+            messages.append("All placed tiles must be connected.")
+
         if not formed_word_details:
-            return ["No complete words have been formed yet."]
+            messages.append("No complete words have been formed yet.")
+            return messages
 
         covered_points = set()
         for detail in formed_word_details:
@@ -375,7 +407,6 @@ class Board:
                 Point(point["x"], point["y"]) for point in detail["points"]
             )
 
-        messages = []
         if covered_points != set(self.placed_tiles):
             messages.append("Every placed tile must belong to a word.")
 

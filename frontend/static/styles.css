@@ -15,8 +15,8 @@
     --bad-bg: #ffe8e5;
     --good: #1d6f3f;
     --good-bg: #e7f4ea;
-    --orphan: #935c00;
-    --orphan-bg: #fff0cf;
+    --warning: #935c00;
+    --warning-bg: #fff0cf;
     --cell-size: 44px;
 }
 
@@ -559,9 +559,9 @@ input {
 }
 
 .status-pill.stale {
-    background: var(--orphan-bg);
-    border-color: var(--orphan);
-    color: var(--orphan);
+    background: var(--warning-bg);
+    border-color: var(--warning);
+    color: var(--warning);
 }
 
 .status-pill.complete {
@@ -648,10 +648,10 @@ input {
     color: var(--good);
 }
 
-.tile.orphan {
-    background: var(--orphan-bg);
-    border-color: var(--orphan);
-    color: var(--orphan);
+.tile.disconnected {
+    background: var(--warning-bg);
+    border-color: var(--warning);
+    color: var(--warning);
 }
 
 .side-panel {

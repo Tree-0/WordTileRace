@@ -4,7 +4,7 @@
         change function signatures to choose which information they want
     - [ ] Better status messages for reasons players cannot peel
 
-- [ ] Better handling for disjoint board -> should show visually that the board is invalid and not let you peel
+- [X] Better handling for disjoint board -> should show visually that the board is invalid and not let you peel
     - Tiles are yellow?
 - [ ] Maybe pop out letter box as draggable toolbar?
 - [X] Try to fix latency
