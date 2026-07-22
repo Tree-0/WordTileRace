@@ -887,12 +887,21 @@ function renderWords() {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "word-button";
-        button.textContent = label;
-        button.setAttribute("aria-expanded", String(ui.expandedWord === detail.word));
+        const isExpanded = ui.expandedWord === detail.word;
+
+        const buttonLabel = document.createElement("span");
+        buttonLabel.textContent = label;
+
+        const toggleIcon = document.createElement("span");
+        toggleIcon.className = "word-toggle-icon";
+        toggleIcon.setAttribute("aria-hidden", "true");
+
+        button.append(buttonLabel, toggleIcon);
+        button.setAttribute("aria-expanded", String(isExpanded));
         button.addEventListener("click", () => toggleWordDefinitions(detail.word));
         item.append(button);
 
-        if (ui.expandedWord === detail.word) {
+        if (isExpanded) {
             item.append(renderWordDefinitions(detail.word));
         }
 

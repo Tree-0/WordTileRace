@@ -1,11 +1,11 @@
 - [ ] Add better status indicator for whether the board is valid
-    - Include detail about the reason (invalid word, invalid disjoint board)
     - Will involve either adding a different validity function, or changing the 
         current function to return additional information. Then will need to 
         change function signatures to choose which information they want
-
+    - [ ] Better status messages for reasons players cannot peel
 
 - [ ] Better handling for disjoint board -> should show visually that the board is invalid and not let you peel
+    - Tiles are yellow?
 - [ ] Maybe pop out letter box as draggable toolbar?
 - [X] Try to fix latency
 - [ ] Better indicators when other players peel
@@ -26,7 +26,6 @@
 
 - [X] Make sure the win condition happens when one player has no more tiles 
     and the number of tiles in the bag is less than the number of players
-
 - [X] Bag size multiplier
 - [X] Move the help icon so that it is not in the way; put it to the right of word tile race
-- [ ] Visual indicator that tiles must be connected -> i.e. disconnected tiles are yellow
+- [X] Word definition drop-down indicator

@@ -821,7 +821,10 @@ input {
 }
 
 .word-button {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     width: 100%;
     min-height: 0;
     border: 0;
@@ -834,6 +837,24 @@ input {
 .word-button:hover {
     background: transparent;
     color: var(--accent-strong);
+}
+
+.word-button:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 3px;
+}
+
+.word-toggle-icon {
+    width: 0.55rem;
+    height: 0.55rem;
+    flex: 0 0 auto;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(45deg);
+}
+
+.word-button[aria-expanded="true"] .word-toggle-icon {
+    transform: rotate(225deg);
 }
 
 .word-definitions {
