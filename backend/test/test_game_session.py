@@ -27,7 +27,7 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(session.bag_count, 123)
         self.assertEqual(session.player_state[player_state.player.id], player_state)
 
-    def test_custom_game_adds_player_with_custom_rack_and_empty_bag(self):
+    def test_custom_game_adds_player_with_custom_rack_and_standard_bag(self):
         session = GameSession.new_game(
             "bean",
             rng=random.Random(2),
@@ -35,10 +35,107 @@ class GameSessionTests(unittest.TestCase):
         )
 
         player_state = session.add_player("Natha")
+        second_player = session.add_player("Friend")
 
         self.assertEqual(player_state.board.unplaced_letters, Counter("BEAN"))
-        self.assertEqual(session.bag_count, 0)
+        self.assertEqual(second_player.board.unplaced_letters, Counter("BEAN"))
+        self.assertEqual(session.bag_count, 144)
         self.assertEqual(session.mode, "custom")
+
+    def test_custom_game_without_rack_draws_21_tiles_for_each_player(self):
+        expected_bag_counts = {
+            1: 102,
+            1.5: 174,
+            2: 246,
+            2.7: 346,
+        }
+        for multiplier, expected_bag_count in expected_bag_counts.items():
+            with self.subTest(multiplier=multiplier):
+                session = GameSession.new_game(
+                    "   ",
+                    rng=random.Random(2),
+                    board_factory=make_board,
+                    bag_multiplier=multiplier,
+                )
+
+                first_player = session.add_player("One")
+                second_player = session.add_player("Two")
+
+                self.assertIsNone(session.custom_rack)
+                self.assertEqual(session.mode, "custom")
+                self.assertEqual(first_player.rack_count, 21)
+                self.assertEqual(second_player.rack_count, 21)
+                self.assertEqual(session.bag_count, expected_bag_count)
+
+    def test_record_round_trip_preserves_custom_mode_without_custom_rack(self):
+        session = GameSession.new_game(
+            "",
+            rng=random.Random(2),
+            board_factory=make_board,
+            bag_multiplier=1.5,
+        )
+        session.add_player("Natha")
+
+        restored = GameSession.from_record(
+            session.to_record(),
+            board_factory=make_board,
+            rng=random.Random(3),
+        )
+
+        self.assertEqual(restored.mode, "custom")
+        self.assertIsNone(restored.custom_rack)
+        self.assertEqual(restored.bag_multiplier, 1.5)
+        self.assertEqual(restored.bag_count, 195)
+
+    def test_legacy_custom_record_infers_none_multiplier_from_empty_bag(self):
+        session = GameSession.new_game("BE", board_factory=make_board)
+        record = session.to_record()
+        record["version"] = 1
+        record["bag"] = {}
+        del record["bag_multiplier"]
+
+        restored = GameSession.from_record(record, board_factory=make_board)
+
+        self.assertEqual(restored.mode, "custom")
+        self.assertEqual(restored.custom_rack, Counter("BE"))
+        self.assertEqual(restored.bag_multiplier, 0.0)
+        self.assertEqual(restored.bag_count, 0)
+
+    def test_none_bag_requires_and_accepts_custom_rack(self):
+        with self.assertRaisesRegex(ValueError, "when bag size is NONE"):
+            GameSession.new_game("", board_factory=make_board, bag_multiplier=0)
+
+        session = GameSession.new_game(
+            "BEAN",
+            board_factory=make_board,
+            bag_multiplier=0,
+        )
+        player_state = session.add_player("Natha")
+        second_player = session.add_player("Friend")
+
+        self.assertEqual(player_state.board.unplaced_letters, Counter("BEAN"))
+        self.assertEqual(second_player.board.unplaced_letters, Counter("BEAN"))
+        self.assertEqual(session.bag_count, 0)
+
+    def test_bag_multiplier_scales_random_and_custom_games(self):
+        random_session = GameSession.new_game(
+            rng=random.Random(2),
+            board_factory=make_board,
+            bag_multiplier=1.59,
+        )
+        random_session.add_player("Random")
+        custom_session = GameSession.new_game(
+            "BEAN",
+            board_factory=make_board,
+            bag_multiplier=2,
+        )
+        custom_session.add_player("Custom")
+
+        self.assertEqual(random_session.bag_multiplier, 1.5)
+        self.assertEqual(random_session.bag_count, 195)
+        self.assertEqual(custom_session.bag_multiplier, 2.0)
+        self.assertEqual(custom_session.bag_count, 288)
+        self.assertEqual(custom_session.public_state()["bag_multiplier"], 2.0)
 
     def test_players_get_normalized_or_default_names_in_public_state(self):
         session = GameSession.new_game("BE", board_factory=make_board)
@@ -126,6 +223,7 @@ class GameSessionTests(unittest.TestCase):
     def test_winner_detected_when_player_peels_with_empty_bag(self):
         session = GameSession.new_game("BE", board_factory=make_board)
         player_state = session.add_player("Natha")
+        session.bag = Counter()
 
         session.place_tile(player_state.player.id, "B", 0, 0)
         session.place_tile(player_state.player.id, "E", 1, 0)
@@ -183,6 +281,7 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(restored.game_id, session.game_id)
         self.assertEqual(restored.mode, "custom")
         self.assertEqual(restored.custom_rack, Counter("BEAN"))
+        self.assertEqual(restored.bag_multiplier, 1.0)
         self.assertEqual(restored.bag, Counter({"Z": 2}))
         self.assertEqual(restored_player.player.player_name, "Natha")
         self.assertEqual(restored_player.board.unplaced_letters, Counter({"A": 1, "N": 1}))

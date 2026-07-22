@@ -219,6 +219,101 @@ input {
     font-weight: 700;
 }
 
+.bag-multiplier-fieldset {
+    min-width: 0;
+    margin: 4px 0 0;
+    border: 0;
+    padding: 0;
+}
+
+.bag-multiplier-fieldset legend {
+    margin-bottom: 8px;
+    padding: 0;
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+
+.bag-multiplier-fieldset > .field-help {
+    margin-bottom: 10px;
+}
+
+.bag-multiplier-options {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 5px;
+}
+
+.bag-multiplier-options label {
+    position: relative;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.custom-game-form .bag-multiplier-options input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    min-height: 0;
+    opacity: 0;
+}
+
+.bag-multiplier-options span {
+    display: grid;
+    min-height: 36px;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--accent);
+    font-size: 0.78rem;
+}
+
+.bag-multiplier-options input:checked + span {
+    border-color: var(--accent);
+    background: var(--cell);
+    color: var(--accent-strong);
+    box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.bag-multiplier-options input:focus-visible + span {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.custom-bag-multiplier {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 6px 10px;
+    margin-top: 10px;
+}
+
+.custom-bag-multiplier > label {
+    grid-column: 1 / -1;
+}
+
+.multiplier-input-wrap {
+    position: relative;
+}
+
+.multiplier-input-wrap input {
+    padding-right: 30px;
+}
+
+.multiplier-input-wrap span {
+    position: absolute;
+    top: 50%;
+    right: 11px;
+    color: var(--muted);
+    transform: translateY(-50%);
+}
+
+.input-limit {
+    color: var(--muted);
+    font-size: 0.76rem;
+    white-space: nowrap;
+}
+
 .custom-game-form input,
 .join-game-form input {
     width: 100%;

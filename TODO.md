@@ -27,4 +27,6 @@
 - [X] Make sure the win condition happens when one player has no more tiles 
     and the number of tiles in the bag is less than the number of players
 
+- [X] Bag size multiplier
+
 - [ ] Visual indicator that tiles must be connected -> i.e. disconnected tiles are yellow

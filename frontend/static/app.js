@@ -13,6 +13,9 @@ const elements = {
     gameView: document.querySelector("#game-view"),
     customForm: document.querySelector("#custom-game-form"),
     customLetters: document.querySelector("#custom-letters"),
+    bagMultiplierChoices: document.querySelectorAll('[name="bag_multiplier_choice"]'),
+    customBagMultiplierWrap: document.querySelector("#custom-bag-multiplier-wrap"),
+    customBagMultiplier: document.querySelector("#custom-bag-multiplier"),
     randomButton: document.querySelector("#random-game-button"),
     settingsToggle: document.querySelector("#settings-toggle"),
     newGameSettings: document.querySelector("#new-game-settings"),
@@ -249,6 +252,37 @@ function setSettingsOpen(isOpen) {
     if (isOpen) {
         elements.customLetters.focus();
     }
+}
+
+function selectedBagMultiplier() {
+    const selected = Array.from(elements.bagMultiplierChoices).find(
+        (choice) => choice.checked,
+    );
+    if (!selected || selected.value !== "custom") {
+        return Number(selected?.value || 1);
+    }
+
+    const entered = Number(elements.customBagMultiplier.value);
+    if (!Number.isFinite(entered) || entered < 1) {
+        setLobbyMessage("Enter a custom bag multiplier between 1x and 4x.");
+        elements.customBagMultiplier.focus();
+        return null;
+    }
+
+    const normalized = Math.min(4, Math.trunc(entered * 10) / 10);
+    elements.customBagMultiplier.value = normalized.toFixed(1);
+    return normalized;
+}
+
+function updateCustomBagMultiplier() {
+    const selected = Array.from(elements.bagMultiplierChoices).find(
+        (choice) => choice.checked,
+    );
+    const isCustom = selected?.value === "custom";
+    const rackIsRequired = selected?.value === "0";
+    elements.customBagMultiplierWrap.hidden = !isCustom;
+    elements.customBagMultiplier.required = isCustom;
+    elements.customLetters.setAttribute("aria-required", String(rackIsRequired));
 }
 
 function setPlayersOpen(isOpen) {
@@ -1193,6 +1227,24 @@ elements.settingsToggle.addEventListener("click", () => {
     setSettingsOpen(elements.newGameSettings.hidden);
 });
 
+for (const choice of elements.bagMultiplierChoices) {
+    choice.addEventListener("change", () => {
+        updateCustomBagMultiplier();
+        if (choice.checked && choice.value === "custom") {
+            elements.customBagMultiplier.focus();
+            elements.customBagMultiplier.select();
+        }
+    });
+}
+updateCustomBagMultiplier();
+
+elements.customBagMultiplier.addEventListener("change", () => {
+    const multiplier = selectedBagMultiplier();
+    if (multiplier !== null) {
+        clearLobbyMessage();
+    }
+});
+
 elements.nicknameInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && elements.joinInput.value.trim()) {
         event.preventDefault();
@@ -1206,13 +1258,24 @@ elements.customForm.addEventListener("submit", async (event) => {
     if (!playerName) {
         return;
     }
+    const bagMultiplier = selectedBagMultiplier();
+    if (bagMultiplier === null) {
+        return;
+    }
+    const customLetters = elements.customLetters.value.trim();
+    if (bagMultiplier === 0 && !customLetters) {
+        setLobbyMessage("Enter custom starting tiles when bag size is NONE.");
+        elements.customLetters.focus();
+        return;
+    }
     ui.selected = { x: 0, y: 0 };
     ui.inviteUrl = null;
     ui.pendingPlayerName = playerName;
     setLobbyMessage("Creating custom match...", true);
     const response = await emitAction("create_game", {
         mode: "custom",
-        letters: elements.customLetters.value,
+        letters: customLetters,
+        bag_multiplier: bagMultiplier,
         player_name: playerName,
     });
     if (!response.success) {

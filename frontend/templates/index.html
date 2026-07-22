@@ -58,10 +58,11 @@
                     </button>
 
                     <div id="new-game-settings" class="new-game-settings" hidden>
-                        <form id="custom-game-form" class="custom-game-form">
+                        <form id="custom-game-form" class="custom-game-form" novalidate>
                             <label for="custom-letters">Custom starting tiles</label>
                             <p id="custom-letters-help" class="field-help">
-                                Give each player this exact rack. The shared bag will be empty.
+                                Give each player this exact rack. Leave blank to draw 21 random
+                                tiles. A custom rack is required when bag size is NONE.
                             </p>
                             <input
                                 id="custom-letters"
@@ -72,8 +73,55 @@
                                 autocomplete="off"
                                 spellcheck="false"
                                 aria-describedby="custom-letters-help"
-                                required
                             >
+
+                            <fieldset class="bag-multiplier-fieldset" aria-describedby="bag-multiplier-help">
+                                <legend>Bag size multiplier</legend>
+                                <p id="bag-multiplier-help" class="field-help">
+                                    Scales the standard 144-tile shared bag; NONE removes the bag.
+                                    Valid multipliers are 1&times;-4&times;.
+                                </p>
+                                <div class="bag-multiplier-options">
+                                    <label>
+                                        <input type="radio" name="bag_multiplier_choice" value="0">
+                                        <span>NONE</span>
+                                    </label>
+                                    <label>
+                                        <input type="radio" name="bag_multiplier_choice" value="1" checked>
+                                        <span>1&times;</span>
+                                    </label>
+                                    <label>
+                                        <input type="radio" name="bag_multiplier_choice" value="1.5">
+                                        <span>1.5&times;</span>
+                                    </label>
+                                    <label>
+                                        <input type="radio" name="bag_multiplier_choice" value="2">
+                                        <span>2&times;</span>
+                                    </label>
+                                    <label>
+                                        <input type="radio" name="bag_multiplier_choice" value="custom">
+                                        <span>Custom</span>
+                                    </label>
+                                </div>
+                                <div id="custom-bag-multiplier-wrap" class="custom-bag-multiplier" hidden>
+                                    <label for="custom-bag-multiplier">Custom multiplier</label>
+                                    <div class="multiplier-input-wrap">
+                                        <input
+                                            id="custom-bag-multiplier"
+                                            name="custom_bag_multiplier"
+                                            type="number"
+                                            min="1"
+                                            max="4"
+                                            step="any"
+                                            value="2.5"
+                                            inputmode="decimal"
+                                            aria-describedby="bag-multiplier-help custom-bag-multiplier-limit"
+                                        >
+                                        <span aria-hidden="true">&times;</span>
+                                    </div>
+                                    <span id="custom-bag-multiplier-limit" class="input-limit">Maximum 4&times;</span>
+                                </div>
+                            </fieldset>
                             <button class="wide-button" type="submit">Create Custom Match</button>
                         </form>
                     </div>

@@ -1,9 +1,14 @@
 from collections import Counter
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 import random
 
 
 DEFAULT_RANDOM_DRAW_COUNT = 21
 DEFAULT_DUMP_DRAW_COUNT = 3
+DEFAULT_BAG_MULTIPLIER = 1.0
+NONE_BAG_MULTIPLIER = 0.0
+MIN_BAG_MULTIPLIER = 1.0
+MAX_BAG_MULTIPLIER = 4.0
 
 STANDARD_TILE_DISTRIBUTION = Counter({
     "A": 13,
@@ -33,6 +38,54 @@ STANDARD_TILE_DISTRIBUTION = Counter({
     "Y": 3,
     "Z": 2,
 })
+
+
+def normalize_bag_multiplier(value: object = DEFAULT_BAG_MULTIPLIER) -> float:
+    """Return a finite bag multiplier truncated to one decimal place."""
+    if isinstance(value, bool):
+        raise ValueError("Bag size multiplier must be a number.")
+
+    try:
+        multiplier = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        raise ValueError("Bag size multiplier must be a number.") from None
+
+    if not multiplier.is_finite():
+        raise ValueError("Bag size multiplier must be a finite number.")
+
+    if multiplier == Decimal(str(NONE_BAG_MULTIPLIER)):
+        return NONE_BAG_MULTIPLIER
+    if multiplier < Decimal(str(MIN_BAG_MULTIPLIER)):
+        raise ValueError(
+            "Bag size multiplier must be NONE (0x) or between "
+            f"{MIN_BAG_MULTIPLIER:g}x and {MAX_BAG_MULTIPLIER:g}x."
+        )
+    if multiplier > Decimal(str(MAX_BAG_MULTIPLIER)):
+        return MAX_BAG_MULTIPLIER
+
+    multiplier = multiplier.quantize(Decimal("0.1"), rounding=ROUND_DOWN)
+    return float(multiplier)
+
+
+def make_tile_bag(multiplier: object = DEFAULT_BAG_MULTIPLIER) -> Counter[str]:
+    """Scale the standard distribution while preserving its proportions."""
+    normalized = Decimal(str(normalize_bag_multiplier(multiplier)))
+    target_count = int(sum(STANDARD_TILE_DISTRIBUTION.values()) * normalized)
+    scaled_bag: Counter[str] = Counter()
+    fractional_counts: list[tuple[Decimal, int, str]] = []
+
+    for index, (char, amount) in enumerate(STANDARD_TILE_DISTRIBUTION.items()):
+        scaled_amount = Decimal(amount) * normalized
+        whole_amount = int(scaled_amount)
+        scaled_bag[char] = whole_amount
+        fractional_counts.append((scaled_amount - whole_amount, index, char))
+
+    remaining = target_count - sum(scaled_bag.values())
+    fractional_counts.sort(key=lambda item: (-item[0], item[1]))
+    for _, _, char in fractional_counts[:remaining]:
+        scaled_bag[char] += 1
+
+    return +scaled_bag
 
 
 def make_custom_rack(letters: str) -> Counter[str]:

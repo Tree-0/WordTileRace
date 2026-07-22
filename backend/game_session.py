@@ -10,11 +10,14 @@ from uuid import UUID, uuid4
 from backend.board import Board, Point, Tile, normalize_char
 from backend.game import Player, PlayerState
 from backend.tile_bag import (
+    DEFAULT_BAG_MULTIPLIER,
     DEFAULT_DUMP_DRAW_COUNT,
     DEFAULT_RANDOM_DRAW_COUNT,
-    STANDARD_TILE_DISTRIBUTION,
+    NONE_BAG_MULTIPLIER,
     draw_tiles,
     make_custom_rack,
+    make_tile_bag,
+    normalize_bag_multiplier,
 )
 
 
@@ -61,6 +64,7 @@ class GameSession:
     board_factory: BoardFactory = field(default=Board, repr=False)
     custom_rack: Counter[str] | None = None
     winner_id: UUID | None = None
+    bag_multiplier: float = DEFAULT_BAG_MULTIPLIER
 
     @classmethod
     def new_game(
@@ -68,26 +72,32 @@ class GameSession:
         letters: str | None = None,
         rng: random.Random | None = None,
         board_factory: BoardFactory = Board,
+        bag_multiplier: object = DEFAULT_BAG_MULTIPLIER,
     ) -> "GameSession":
         rng = rng or random.Random()
-        if letters is None:
-            return cls(
-                uuid4(),
-                STANDARD_TILE_DISTRIBUTION.copy(),
-                rng,
-                {},
-                "random",
-                board_factory,
+        normalized_multiplier = normalize_bag_multiplier(bag_multiplier)
+        bag = make_tile_bag(normalized_multiplier)
+        is_custom_mode = letters is not None
+        normalized_letters = letters.strip() if letters is not None else ""
+        custom_rack = (
+            make_custom_rack(normalized_letters)
+            if normalized_letters
+            else None
+        )
+        if normalized_multiplier == NONE_BAG_MULTIPLIER and custom_rack is None:
+            raise ValueError(
+                "Enter custom starting tiles when bag size is NONE."
             )
 
         return cls(
-            uuid4(),
-            Counter(),
-            rng,
-            {},
-            "custom",
-            board_factory,
-            make_custom_rack(letters),
+            game_id=uuid4(),
+            bag=bag,
+            rng=rng,
+            player_state={},
+            mode="custom" if is_custom_mode else "random",
+            board_factory=board_factory,
+            custom_rack=custom_rack,
+            bag_multiplier=normalized_multiplier,
         )
 
     @property
@@ -304,6 +314,7 @@ class GameSession:
             "is_game_over": self.is_game_over,
             "winner_id": str(self.winner_id) if self.winner_id else None,
             "winner_name": self.winner_name,
+            "bag_multiplier": self.bag_multiplier,
             "players": self._public_players(),
             "public": self.public_state(),
         })
@@ -323,6 +334,7 @@ class GameSession:
             "winner_id": str(self.winner_id) if self.winner_id else None,
             "winner_name": self.winner_name,
             "mode": self.mode,
+            "bag_multiplier": self.bag_multiplier,
             "players": self._public_players(),
         }
 
@@ -339,10 +351,11 @@ class GameSession:
 
     def to_record(self) -> dict:
         return {
-            "version": 1,
+            "version": 2,
             "game_id": str(self.game_id),
             "mode": self.mode,
             "bag": dict(self.bag),
+            "bag_multiplier": self.bag_multiplier,
             "custom_rack": (
                 dict(self.custom_rack)
                 if self.custom_rack is not None
@@ -384,20 +397,29 @@ class GameSession:
     ) -> "GameSession":
         rng = rng or random.Random()
         mode = str(record["mode"])
+        bag = Counter(record.get("bag") or {})
+        legacy_bag_multiplier = (
+            NONE_BAG_MULTIPLIER
+            if mode == "custom" and not bag
+            else DEFAULT_BAG_MULTIPLIER
+        )
         player_state: dict[UUID, PlayerState] = {}
         session = cls(
-            UUID(str(record["game_id"])),
-            Counter(record.get("bag") or {}),
-            rng,
-            player_state,
-            mode,
-            board_factory,
-            (
+            game_id=UUID(str(record["game_id"])),
+            bag=bag,
+            rng=rng,
+            player_state=player_state,
+            mode=mode,
+            board_factory=board_factory,
+            custom_rack=(
                 Counter(record["custom_rack"])
                 if record.get("custom_rack") is not None
                 else None
             ),
-            (
+            bag_multiplier=normalize_bag_multiplier(
+                record.get("bag_multiplier", legacy_bag_multiplier)
+            ),
+            winner_id=(
                 UUID(str(record["winner_id"]))
                 if record.get("winner_id")
                 else None

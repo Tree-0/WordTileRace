@@ -82,17 +82,20 @@ def register_socket_handlers(
             _leave_existing_rooms()
             mode = payload.get("mode", "random")
             letters = payload.get("letters")
+            bag_multiplier = payload.get("bag_multiplier", 1)
             player_name = payload.get("player_name")
             if mode == "custom":
                 session = GameSession.new_game(
                     str(letters or ""),
                     rng=rng,
                     board_factory=board_factory,
+                    bag_multiplier=bag_multiplier,
                 )
             elif mode == "random":
                 session = GameSession.new_game(
                     rng=rng,
                     board_factory=board_factory,
+                    bag_multiplier=bag_multiplier,
                 )
             else:
                 raise ValueError("Mode must be custom or random.")

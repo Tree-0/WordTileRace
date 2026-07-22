@@ -69,6 +69,89 @@ class SocketHandlerTests(unittest.TestCase):
         ]
         self.assertEqual(joined_events[-1]["player_name"], "Alice Smith")
 
+    def test_create_game_applies_truncated_and_capped_bag_multiplier(self):
+        app, store = self.make_app_and_store()
+        client = socketio.test_client(app)
+
+        truncated_ack = self.emit_ack(client, "create_game", {
+            "mode": "custom",
+            "letters": "BE",
+            "bag_multiplier": 1.59,
+        })
+        capped_ack = self.emit_ack(client, "create_game", {
+            "mode": "custom",
+            "letters": "BE",
+            "bag_multiplier": 9,
+        })
+
+        truncated_session = store.get(truncated_ack["game_id"])
+        capped_session = store.get(capped_ack["game_id"])
+        self.assertEqual(truncated_session.bag_multiplier, 1.5)
+        self.assertEqual(truncated_session.bag_count, 216)
+        self.assertEqual(capped_session.bag_multiplier, 4.0)
+        self.assertEqual(capped_session.bag_count, 576)
+
+    def test_custom_game_without_rack_draws_random_starting_tiles(self):
+        app, store = self.make_app_and_store()
+        first_client = socketio.test_client(app)
+        first_ack = self.emit_ack(first_client, "create_game", {
+            "mode": "custom",
+            "letters": "   ",
+            "bag_multiplier": 1,
+        })
+        second_client = socketio.test_client(app)
+        second_ack = self.emit_ack(second_client, "join_game", {
+            "game_id": first_ack["game_id"],
+        })
+
+        session = store.get(first_ack["game_id"])
+        self.assertTrue(first_ack["success"])
+        self.assertTrue(second_ack["success"])
+        self.assertEqual(session.mode, "custom")
+        self.assertIsNone(session.custom_rack)
+        self.assertEqual(
+            session.get_player_state(first_ack["player_id"]).rack_count,
+            21,
+        )
+        self.assertEqual(
+            session.get_player_state(second_ack["player_id"]).rack_count,
+            21,
+        )
+        self.assertEqual(session.bag_count, 102)
+
+    def test_none_bag_requires_custom_starting_tiles(self):
+        app, store = self.make_app_and_store()
+        client = socketio.test_client(app)
+
+        rejected_ack = self.emit_ack(client, "create_game", {
+            "mode": "custom",
+            "letters": "   ",
+            "bag_multiplier": 0,
+        })
+        accepted_ack = self.emit_ack(client, "create_game", {
+            "mode": "custom",
+            "letters": "BE",
+            "bag_multiplier": 0,
+        })
+
+        self.assertFalse(rejected_ack["success"])
+        self.assertIn("when bag size is NONE", rejected_ack["message"])
+        self.assertTrue(accepted_ack["success"])
+        self.assertEqual(store.get(accepted_ack["game_id"]).bag_count, 0)
+
+    def test_custom_game_rejects_multiplier_between_none_and_one_x(self):
+        app, _ = self.make_app_and_store()
+        client = socketio.test_client(app)
+
+        ack = self.emit_ack(client, "create_game", {
+            "mode": "custom",
+            "letters": "BE",
+            "bag_multiplier": 0.5,
+        })
+
+        self.assertFalse(ack["success"])
+        self.assertIn("NONE (0x) or between 1x and 4x", ack["message"])
+
     def test_join_game_adds_second_player(self):
         app, store = self.make_app_and_store()
         first_client = socketio.test_client(app)

@@ -21,6 +21,10 @@ to draw one tile for every player. A player can dump a rack tile while tiles
 remain in the bag; the dumped tile returns to the bag and that player draws up
 to three replacement tiles.
 
+Custom matches can scale the standard shared bag
+from 1x to 4x, or remove it with the NONE option. Each player gets the same
+exact custom rack when one is supplied, or draws 21 random tiles otherwise.
+
 The game ends when fewer tiles remain in the bag than there are players and a
 player has an empty rack with a valid board. As of now, there are no timers, no
 scores, and no saved info beyond the
