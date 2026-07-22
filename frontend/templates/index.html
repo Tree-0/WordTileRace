@@ -168,18 +168,17 @@
             </div>
         </aside>
 
-        <button
-            class="help-button corner-help-button game-corner-help-button"
-            type="button"
-            data-open-help
-            aria-label="Show game rules and controls"
-        >?</button>
-
         <section class="play-area" aria-label="Word Tile Race board">
             <div class="top-bar">
                 <div class="game-toolbar">
                     <a id="home-button" class="secondary-button home-button" href="{{ url_for('index') }}">Home</a>
                     <strong>Word Tile Race</strong>
+                    <button
+                        class="help-button toolbar-help-button"
+                        type="button"
+                        data-open-help
+                        aria-label="Show game rules and controls"
+                    >?</button>
                 </div>
 
                 <div class="game-status-group">

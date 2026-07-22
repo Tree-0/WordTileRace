@@ -525,15 +525,12 @@ input {
     z-index: 10;
 }
 
-.game-corner-help-button {
-    top: 22px;
-    right: 22px;
-}
-
-@media (min-width: 841px) {
-    .session-panel .panel-heading {
-        padding-right: 42px;
-    }
+.toolbar-help-button {
+    width: 30px;
+    min-width: 30px;
+    min-height: 30px;
+    margin-left: 2px;
+    font-size: 0.9rem;
 }
 
 .status-pill {
@@ -1033,10 +1030,6 @@ input {
 
     .play-area {
         min-height: 66vh;
-    }
-
-    .top-bar {
-        padding-right: 54px;
     }
 }
 

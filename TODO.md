@@ -28,5 +28,5 @@
     and the number of tiles in the bag is less than the number of players
 
 - [X] Bag size multiplier
-
+- [X] Move the help icon so that it is not in the way; put it to the right of word tile race
 - [ ] Visual indicator that tiles must be connected -> i.e. disconnected tiles are yellow
