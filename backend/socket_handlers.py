@@ -244,6 +244,39 @@ def register_socket_handlers(
                 debug,
             )
 
+    @socketio.on("move_tiles")
+    def move_tiles(payload=None):
+        debug = _debug_context("move_tiles", payload)
+        try:
+            payload = _payload(payload)
+            points = _parse_points(payload)
+            offset = _parse_point(payload, "offset")
+            overwrite = bool(payload.get("overwrite", False))
+
+            def mutate(session, player_id):
+                return session.move_tiles(
+                    player_id,
+                    points,
+                    offset,
+                    overwrite=overwrite,
+                )
+
+            session, player_id, diff = _mutate_current_session(
+                store,
+                mutate,
+                debug=debug,
+            )
+            _emit_state_diff(session, player_id, diff, debug=debug)
+            if diff["rack_delta"]:
+                _emit_public_player_diff(session, player_id)
+            return _with_debug_timing({"success": True}, debug)
+        except ValueError as error:
+            _emit_action_failure(store, str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
+
     @socketio.on("remove_tile")
     def remove_tile(payload=None):
         debug = _debug_context("remove_tile", payload)
@@ -253,6 +286,31 @@ def register_socket_handlers(
 
             def mutate(session, player_id):
                 return session.remove_tile(player_id, point.x, point.y)
+
+            session, player_id, diff = _mutate_current_session(
+                store,
+                mutate,
+                debug=debug,
+            )
+            _emit_state_diff(session, player_id, diff, debug=debug)
+            _emit_public_player_diff(session, player_id)
+            return _with_debug_timing({"success": True}, debug)
+        except ValueError as error:
+            _emit_action_failure(store, str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
+
+    @socketio.on("remove_tiles")
+    def remove_tiles(payload=None):
+        debug = _debug_context("remove_tiles", payload)
+        try:
+            payload = _payload(payload)
+            points = _parse_points(payload)
+
+            def mutate(session, player_id):
+                return session.remove_tiles(player_id, points)
 
             session, player_id, diff = _mutate_current_session(
                 store,
@@ -444,6 +502,13 @@ def _parse_point(payload: dict, name: str | None = None) -> Point:
         raise ValueError("Expected integer x and y coordinates.") from None
 
 
+def _parse_points(payload: dict, name: str = "points") -> list[Point]:
+    sources = payload.get(name)
+    if not isinstance(sources, list):
+        raise ValueError("Expected a list of point coordinates.")
+    return [_parse_point(source) for source in sources]
+
+
 def _emit_joined(
     session: GameSession,
     player_id: UUID,
@@ -513,7 +578,13 @@ def _emit_state_diff(
     debug: dict | None = None,
 ) -> None:
     payload = {"success": True, **diff}
-    if diff["type"] in {"tile_placed", "tile_moved", "tile_removed"}:
+    if diff["type"] in {
+        "tile_placed",
+        "tile_moved",
+        "tile_removed",
+        "tiles_moved",
+        "tiles_removed",
+    }:
         payload.update({
             "validation_stale": True,
             "message": "Board changed. Peel will validate before drawing.",

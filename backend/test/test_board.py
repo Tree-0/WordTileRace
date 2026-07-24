@@ -209,6 +209,85 @@ class BoardTests(unittest.TestCase):
         self.assertEqual(board.placed_tiles[Point(0, 0)], Tile("A"))
         self.assertEqual(board.placed_tiles[Point(1, 0)], Tile("B"))
 
+    def test_move_tiles_allows_internal_overlap_and_preserves_holes(self):
+        board = self.make_board("ABX")
+        board.place_tile("A", 0, 0)
+        board.place_tile("B", 2, 0)
+        board.place_tile("X", 1, 1)
+
+        moves, displaced = board.move_tiles(
+            [Point(0, 0), Point(2, 0)],
+            Point(0, 1),
+        )
+
+        self.assertEqual(
+            [(source, destination) for source, destination, _ in moves],
+            [
+                (Point(0, 0), Point(0, 1)),
+                (Point(2, 0), Point(2, 1)),
+            ],
+        )
+        self.assertEqual(displaced, {})
+        self.assertEqual(board.placed_tiles[Point(0, 1)], Tile("A"))
+        self.assertEqual(board.placed_tiles[Point(2, 1)], Tile("B"))
+        self.assertEqual(board.placed_tiles[Point(1, 1)], Tile("X"))
+
+    def test_move_tiles_rejects_external_collision_atomically(self):
+        board = self.make_board("ABX")
+        board.place_tile("A", 0, 0)
+        board.place_tile("B", 1, 0)
+        board.place_tile("X", 2, 0)
+        before_tiles = board.placed_tiles.copy()
+        before_rack = board.unplaced_letters.copy()
+
+        with self.assertRaisesRegex(ValueError, "overlap existing tiles"):
+            board.move_tiles(
+                [Point(0, 0), Point(1, 0)],
+                Point(1, 0),
+            )
+
+        self.assertEqual(board.placed_tiles, before_tiles)
+        self.assertEqual(board.unplaced_letters, before_rack)
+
+    def test_move_tiles_can_displace_collisions_to_rack(self):
+        board = self.make_board("ABX")
+        board.place_tile("A", 0, 0)
+        board.place_tile("B", 1, 0)
+        board.place_tile("X", 2, 0)
+
+        _, displaced = board.move_tiles(
+            [Point(0, 0), Point(1, 0)],
+            Point(1, 0),
+            overwrite=True,
+        )
+
+        self.assertEqual(displaced, {Point(2, 0): Tile("X")})
+        self.assertEqual(
+            board.placed_tiles,
+            {
+                Point(1, 0): Tile("A"),
+                Point(2, 0): Tile("B"),
+            },
+        )
+        self.assertEqual(board.unplaced_letters, Counter({"X": 1}))
+
+    def test_remove_letters_validates_every_point_before_mutating(self):
+        board = self.make_board("AB")
+        board.place_tile("A", 0, 0)
+        board.place_tile("B", 1, 0)
+
+        with self.assertRaisesRegex(ValueError, r"No tile placed at \(2, 0\)"):
+            board.remove_letters([Point(0, 0), Point(2, 0)])
+
+        self.assertEqual(
+            board.placed_tiles,
+            {
+                Point(0, 0): Tile("A"),
+                Point(1, 0): Tile("B"),
+            },
+        )
+        self.assertEqual(board.unplaced_letters, Counter())
+
     def test_get_formed_word_details_preserves_duplicate_word_paths(self):
         board = self.make_board("BEBE", valid_words={"BE", "BB", "EE"})
         board.place_tile("B", 0, 0)

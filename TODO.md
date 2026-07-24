@@ -10,7 +10,11 @@
 - [X] Try to fix latency
 - [ ] Better indicators when other players peel
 - [ ] Setting to enable auto-moving right or down when placing tiles
-- [ ] Click and drag select boxes to mass delete or reorganize words
+
+- [X] Hold shift, click and drag select boxes to mass delete or reorganize words
+    - Hold shift, arrow keys to select an area
+    - Let them click and drag the group
+
 - [ ] Sometimes I get 'connected to game' and 'connection not ready yet' even when I am already playing in a match
     - Need to figure out why connectivity is so buns
 - [ ] More concise GameIDs

@@ -201,6 +201,86 @@ class GameSession:
             **self._action_capabilities(player_state),
         }
 
+    def move_tiles(
+        self,
+        player_id: UUID | str,
+        from_points: list[Point],
+        offset: Point,
+        *,
+        overwrite: bool = False,
+    ) -> dict:
+        self._ensure_active()
+        player_state = self._get_player_state(player_id)
+        before_rack = player_state.board.unplaced_letters.copy()
+        moves, displaced = player_state.board.move_tiles(
+            from_points,
+            offset,
+            overwrite=overwrite,
+        )
+        affected_points = [
+            point
+            for source, destination, _ in moves
+            for point in (source, destination)
+        ]
+        return {
+            "type": "tiles_moved",
+            "moves": [
+                {
+                    "from": _point_payload(source),
+                    "to": _point_payload(destination),
+                    "tile": _tile_payload(tile),
+                }
+                for source, destination, tile in moves
+            ],
+            "displaced": [
+                {
+                    "point": _point_payload(point),
+                    "tile": _tile_payload(tile),
+                }
+                for point, tile in displaced.items()
+            ],
+            "rack_delta": _counter_delta(
+                before_rack,
+                player_state.board.unplaced_letters,
+            ),
+            "partial_validation": (
+                player_state.board.get_formed_word_details_around_points(
+                    affected_points
+                )
+            ),
+            **self._action_capabilities(player_state),
+        }
+
+    def remove_tiles(
+        self,
+        player_id: UUID | str,
+        points: list[Point],
+    ) -> dict:
+        self._ensure_active()
+        player_state = self._get_player_state(player_id)
+        before_rack = player_state.board.unplaced_letters.copy()
+        removed = player_state.board.remove_letters(points)
+        return {
+            "type": "tiles_removed",
+            "removed": [
+                {
+                    "point": _point_payload(point),
+                    "tile": _tile_payload(tile),
+                }
+                for point, tile in removed.items()
+            ],
+            "rack_delta": _counter_delta(
+                before_rack,
+                player_state.board.unplaced_letters,
+            ),
+            "partial_validation": (
+                player_state.board.get_formed_word_details_around_points(
+                    removed
+                )
+            ),
+            **self._action_capabilities(player_state),
+        }
+
     def remove_tile(self, player_id: UUID | str, x: int, y: int) -> dict:
         self._ensure_active()
         player_state = self._get_player_state(player_id)

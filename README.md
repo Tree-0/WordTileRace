@@ -35,9 +35,17 @@ scope of the current match (no player stats, streaks, etc.).
 - Click a grid cell to select it, or move cells with arrow keys.
 - Press `A-Z` to place that letter in the selected cell.
   - Alternatively, drag a rack tile onto the grid to place it.
-- Press `Backspace`, `Escape`, or `Delete` to remove the selected tile.
+- Press `Backspace`, `Delete`, or ``Backtick (`)`` to return the selected tile or block to the rack.
 - Drag a placed tile to an empty cell to move it.
 - Drag a placed tile back to the rack to remove it.
+- Hold `Shift` while dragging across the board, or use `Shift + Arrow`, to
+  select the occupied tiles within an area. Empty cells inside the area are
+  ignored.
+- Press `Ctrl/Cmd + C` or `Ctrl/Cmd + X` to prepare a selected block to move,
+  choose its destination with a click or the arrow keys, and press
+  `Ctrl/Cmd + V` to place it.
+- Drag any tile in a selected block to move the whole block.
+- Press `Escape` to cancel a pending block move or collapse a selection.
 - Click `Peel` when it is enabled, or press `Space`, to draw one tile for every
   player.
 - Click `Dump` below a rack tile to return it and draw replacements.

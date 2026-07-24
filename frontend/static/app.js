@@ -1,6 +1,7 @@
 const GRID_PADDING = 4;
 const MIN_GRID_SIZE = 13;
 const SESSION_STORAGE_KEY = "wordTileRaceSession";
+const PREFERENCES_STORAGE_KEY = "wordTileRacePreferences";
 
 const SOCKET_TIMING_DEBUG =
     new URLSearchParams(window.location.search).has("debugTiming") ||
@@ -36,6 +37,7 @@ const elements = {
     grid: document.querySelector("#grid"),
     gameId: document.querySelector("#game-id"),
     copyGameLinkButton: document.querySelector("#copy-game-link-button"),
+    overwriteBlockMoves: document.querySelector("#overwrite-block-moves"),
     rack: document.querySelector("#rack"),
     rackCount: document.querySelector("#rack-count"),
     bagCount: document.querySelector("#bag-count"),
@@ -54,6 +56,11 @@ const ui = {
     pendingPlayerName: null,
     inviteUrl: null,
     dragged: null,
+    selection: null,
+    rangeGesture: null,
+    moveBuffer: null,
+    pendingBlockMove: null,
+    suppressNextGridClick: false,
     expandedWord: null,
     definitionCache: new Map(),
     pendingActions: new Map(),
@@ -175,6 +182,35 @@ function saveSession(gameId, playerId, playerName = null) {
         );
     } catch (error) {
         // Local storage can be disabled; reconnect will simply be manual.
+    }
+}
+
+function savedPreferences() {
+    try {
+        const value = window.localStorage.getItem(PREFERENCES_STORAGE_KEY);
+        return value ? JSON.parse(value) : {};
+    } catch (error) {
+        return {};
+    }
+}
+
+function savePreferences() {
+    try {
+        window.localStorage.setItem(
+            PREFERENCES_STORAGE_KEY,
+            JSON.stringify({
+                overwriteBlockMoves: Boolean(elements.overwriteBlockMoves?.checked),
+            }),
+        );
+    } catch (error) {
+        // Local storage can be disabled; preferences will last for this page only.
+    }
+}
+
+function initializePreferences() {
+    const preferences = savedPreferences();
+    if (elements.overwriteBlockMoves) {
+        elements.overwriteBlockMoves.checked = Boolean(preferences.overwriteBlockMoves);
     }
 }
 
@@ -330,6 +366,176 @@ function tileMap() {
     return map;
 }
 
+function samePoint(first, second) {
+    return Boolean(
+        first
+        && second
+        && first.x === second.x
+        && first.y === second.y
+    );
+}
+
+function selectionBounds(points) {
+    if (!points.length) {
+        return null;
+    }
+    return {
+        minX: Math.min(...points.map((point) => point.x)),
+        maxX: Math.max(...points.map((point) => point.x)),
+        minY: Math.min(...points.map((point) => point.y)),
+        maxY: Math.max(...points.map((point) => point.y)),
+    };
+}
+
+function selectionCorner(anchor, focus) {
+    const vertical = focus.y >= anchor.y ? "s" : "n";
+    const horizontal = focus.x >= anchor.x ? "e" : "w";
+    return `${vertical}${horizontal}`;
+}
+
+function cornerPoint(bounds, corner) {
+    return {
+        x: corner.endsWith("e") ? bounds.maxX : bounds.minX,
+        y: corner.startsWith("s") ? bounds.maxY : bounds.minY,
+    };
+}
+
+function oppositeCornerPoint(selection) {
+    const opposite = {
+        ne: "sw",
+        nw: "se",
+        se: "nw",
+        sw: "ne",
+    }[selection.corner];
+    return cornerPoint(selection.bounds, opposite);
+}
+
+function makeSelection(points, corner = "se") {
+    const unique = new Map();
+    for (const point of points) {
+        unique.set(pointKey(point.x, point.y), { x: point.x, y: point.y });
+    }
+    const selectedPoints = [...unique.values()].sort((first, second) =>
+        first.y - second.y || first.x - second.x
+    );
+    const bounds = selectionBounds(selectedPoints);
+    if (!bounds) {
+        return null;
+    }
+    return {
+        points: selectedPoints,
+        bounds,
+        corner,
+        pivot: cornerPoint(bounds, corner),
+    };
+}
+
+function selectionFromMarquee(anchor, focus) {
+    const minX = Math.min(anchor.x, focus.x);
+    const maxX = Math.max(anchor.x, focus.x);
+    const minY = Math.min(anchor.y, focus.y);
+    const maxY = Math.max(anchor.y, focus.y);
+    const points = ui.state.placed_tiles
+        .filter((tile) =>
+            tile.x >= minX
+            && tile.x <= maxX
+            && tile.y >= minY
+            && tile.y <= maxY
+        )
+        .map((tile) => ({ x: tile.x, y: tile.y }));
+    return makeSelection(points, selectionCorner(anchor, focus));
+}
+
+function cloneSelection(selection) {
+    if (!selection) {
+        return null;
+    }
+    return makeSelection(selection.points, selection.corner);
+}
+
+function translatedSelection(selection, offset) {
+    return makeSelection(
+        selection.points.map((point) => ({
+            x: point.x + offset.x,
+            y: point.y + offset.y,
+        })),
+        selection.corner,
+    );
+}
+
+function selectionKeys(selection) {
+    return new Set(
+        (selection?.points || []).map((point) => pointKey(point.x, point.y))
+    );
+}
+
+function selectionContains(selection, point) {
+    return selectionKeys(selection).has(pointKey(point.x, point.y));
+}
+
+function currentTileSelection() {
+    if (ui.selection) {
+        return cloneSelection(ui.selection);
+    }
+    const tile = selectedTile();
+    if (!tile) {
+        return null;
+    }
+    return makeSelection([{ x: tile.x, y: tile.y }]);
+}
+
+function clearRangeSelection() {
+    if (ui.selection) {
+        ui.selected = { ...ui.selection.pivot };
+    }
+    ui.selection = null;
+    ui.rangeGesture = null;
+}
+
+function resetBoardInteractions() {
+    ui.selection = null;
+    ui.rangeGesture = null;
+    ui.moveBuffer = null;
+    ui.pendingBlockMove = null;
+    ui.dragged = null;
+}
+
+function localInteractionMessage(message) {
+    if (!ui.state) {
+        return;
+    }
+    ui.state.message = message;
+    ui.state.messages = [message];
+    renderMessages();
+}
+
+function projectedMove() {
+    if (!ui.moveBuffer || !ui.selected) {
+        return null;
+    }
+
+    const offset = {
+        x: ui.selected.x - ui.moveBuffer.pivot.x,
+        y: ui.selected.y - ui.moveBuffer.pivot.y,
+    };
+    const sourceKeys = selectionKeys(ui.moveBuffer.selection);
+    const occupied = tileMap();
+    return {
+        offset,
+        destinations: ui.moveBuffer.selection.points.map((source) => {
+            const point = {
+                x: source.x + offset.x,
+                y: source.y + offset.y,
+            };
+            const occupiedByOutsideTile = (
+                occupied.has(pointKey(point.x, point.y))
+                && !sourceKeys.has(pointKey(point.x, point.y))
+            );
+            return { point, occupiedByOutsideTile };
+        }),
+    };
+}
+
 function wordCoverage() {
     const coverage = new Map();
     for (const detail of ui.state.formed_words || []) {
@@ -348,6 +554,10 @@ function wordCoverage() {
 function viewportBounds() {
     const points = ui.state.placed_tiles.map((tile) => ({ x: tile.x, y: tile.y }));
     points.push(ui.selected);
+    const preview = projectedMove();
+    if (preview) {
+        points.push(...preview.destinations.map((destination) => destination.point));
+    }
 
     let minX = Math.min(...points.map((point) => point.x)) - GRID_PADDING;
     let maxX = Math.max(...points.map((point) => point.x)) + GRID_PADDING;
@@ -427,11 +637,33 @@ function applyStateDiff(diff) {
         setPlacedTile(state, diff.to, diff.tile);
         updateActionFlags(state, diff);
         updateChangedWordValidation(state, diff);
+    } else if (diff.type === "tiles_moved") {
+        for (const move of diff.moves || []) {
+            removePlacedTile(state, move.from);
+        }
+        for (const displaced of diff.displaced || []) {
+            removePlacedTile(state, displaced.point);
+        }
+        for (const move of diff.moves || []) {
+            setPlacedTile(state, move.to, move.tile);
+        }
+        applyRackDelta(state, diff.rack_delta);
+        updateActionFlags(state, diff);
+        updateChangedWordValidation(state, diff);
+        completePendingBlockMove(diff);
     } else if (diff.type === "tile_removed") {
         removePlacedTile(state, diff.point);
         applyRackDelta(state, diff.rack_delta);
         updateActionFlags(state, diff);
         updateChangedWordValidation(state, diff);
+    } else if (diff.type === "tiles_removed") {
+        for (const removed of diff.removed || []) {
+            removePlacedTile(state, removed.point);
+        }
+        applyRackDelta(state, diff.rack_delta);
+        updateActionFlags(state, diff);
+        updateChangedWordValidation(state, diff);
+        resetBoardInteractions();
     } else if (diff.type === "rack_changed" || diff.type === "peeled") {
         applyRackDelta(state, diff.rack_delta);
         if (typeof diff.bag_count === "number") {
@@ -452,6 +684,7 @@ function applyStateDiff(diff) {
             state.messages = [diff.message];
         }
     } else if (diff.type === "game_over") {
+        resetBoardInteractions();
         state.is_game_over = true;
         state.winner_id = diff.winner_id;
         state.winner_name = diff.winner_name;
@@ -533,6 +766,28 @@ function removePlacedTile(state, point) {
     state.placed_tiles = state.placed_tiles.filter((tile) =>
         tile.x !== point.x || tile.y !== point.y
     );
+}
+
+function completePendingBlockMove(diff) {
+    const pending = ui.pendingBlockMove;
+    ui.moveBuffer = null;
+    ui.rangeGesture = null;
+
+    if (!pending) {
+        ui.selection = makeSelection(
+            (diff.moves || []).map((move) => move.to)
+        );
+        if (ui.selection) {
+            ui.selected = { ...ui.selection.pivot };
+        }
+        return;
+    }
+
+    ui.selection = translatedSelection(pending.selection, pending.offset);
+    if (ui.selection) {
+        ui.selected = { ...ui.selection.pivot };
+    }
+    ui.pendingBlockMove = null;
 }
 
 function applyRackDelta(state, rackDelta = {}) {
@@ -797,6 +1052,8 @@ function renderRack() {
         tile.innerHTML = `<span>${char}</span><span class="count">${count}</span>`;
         tile.addEventListener("click", () => placeSelected(char, true));
         tile.addEventListener("dragstart", () => {
+            ui.selection = null;
+            ui.moveBuffer = null;
             ui.dragged = { type: "rack", char };
         });
 
@@ -1038,6 +1295,7 @@ function renderGrid() {
     const bounds = viewportBounds();
     const tiles = tileMap();
     const coverage = wordCoverage();
+    const interaction = gridInteractionState();
     const columns = bounds.maxX - bounds.minX + 1;
 
     elements.grid.innerHTML = "";
@@ -1045,11 +1303,64 @@ function renderGrid() {
 
     for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
         for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
-            elements.grid.append(renderCell(x, y, tiles, coverage));
+            elements.grid.append(renderCell(x, y, tiles, coverage, interaction));
         }
     }
 
     keepSelectedCellVisible();
+}
+
+function gridInteractionState() {
+    const rangeKeys = selectionKeys(ui.selection);
+    const cutKeys = selectionKeys(ui.moveBuffer?.selection);
+    const preview = projectedMove();
+    const previewByKey = new Map();
+    for (const destination of preview?.destinations || []) {
+        previewByKey.set(
+            pointKey(destination.point.x, destination.point.y),
+            destination,
+        );
+    }
+    return {
+        rangeKeys,
+        cutKeys,
+        pivot: ui.selection?.pivot || null,
+        previewByKey,
+        overwrite: Boolean(elements.overwriteBlockMoves?.checked),
+    };
+}
+
+function applyCellInteractionClasses(cell, x, y, interaction) {
+    const key = pointKey(x, y);
+    const preview = interaction.previewByKey.get(key);
+    cell.classList.toggle("selected", x === ui.selected.x && y === ui.selected.y);
+    cell.classList.toggle("range-selected", interaction.rangeKeys.has(key));
+    cell.classList.toggle(
+        "selection-pivot",
+        Boolean(interaction.pivot && x === interaction.pivot.x && y === interaction.pivot.y),
+    );
+    cell.classList.toggle("cut-source", interaction.cutKeys.has(key));
+    cell.classList.toggle("move-preview", Boolean(preview));
+    cell.classList.toggle(
+        "move-preview-blocked",
+        Boolean(preview?.occupiedByOutsideTile && !interaction.overwrite),
+    );
+    cell.classList.toggle(
+        "move-preview-displace",
+        Boolean(preview?.occupiedByOutsideTile && interaction.overwrite),
+    );
+}
+
+function refreshGridInteractionClasses() {
+    const interaction = gridInteractionState();
+    for (const cell of elements.grid.querySelectorAll(".cell")) {
+        applyCellInteractionClasses(
+            cell,
+            Number(cell.dataset.x),
+            Number(cell.dataset.y),
+            interaction,
+        );
+    }
 }
 
 function keepSelectedCellVisible() {
@@ -1075,24 +1386,137 @@ function keepSelectedCellVisible() {
     }
 }
 
-function renderCell(x, y, tiles, coverage) {
+function handleCellClick(event, x, y) {
+    if (ui.pendingBlockMove) {
+        return;
+    }
+    if (ui.suppressNextGridClick) {
+        ui.suppressNextGridClick = false;
+        return;
+    }
+    if (event.shiftKey) {
+        return;
+    }
+
+    const point = { x, y };
+    if (ui.moveBuffer) {
+        ui.selected = point;
+        renderGrid();
+        return;
+    }
+
+    if (ui.selection && selectionContains(ui.selection, point)) {
+        ui.selected = { ...ui.selection.pivot };
+        refreshGridInteractionClasses();
+        return;
+    }
+
+    ui.selection = null;
+    ui.rangeGesture = null;
+    ui.selected = point;
+    renderGrid();
+}
+
+function beginPointerSelection(event, x, y) {
+    if (
+        !event.shiftKey
+        || event.button !== 0
+        || !ui.state
+        || ui.state.is_game_over
+        || ui.pendingBlockMove
+    ) {
+        return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    ui.moveBuffer = null;
+    ui.pendingBlockMove = null;
+    ui.rangeGesture = {
+        type: "pointer",
+        pointerId: event.pointerId,
+        anchor: { x, y },
+        focus: { x, y },
+        moved: false,
+    };
+    ui.selected = { x, y };
+    ui.selection = selectionFromMarquee(
+        ui.rangeGesture.anchor,
+        ui.rangeGesture.focus,
+    );
+    refreshGridInteractionClasses();
+}
+
+function gridCellAt(clientX, clientY) {
+    const target = document.elementFromPoint(clientX, clientY);
+    const cell = target?.closest?.(".cell");
+    if (!cell || !elements.grid.contains(cell)) {
+        return null;
+    }
+    return {
+        x: Number(cell.dataset.x),
+        y: Number(cell.dataset.y),
+    };
+}
+
+function updatePointerSelection(event) {
+    const gesture = ui.rangeGesture;
+    if (!gesture || gesture.type !== "pointer") {
+        return;
+    }
+    const point = gridCellAt(event.clientX, event.clientY);
+    if (!point || samePoint(point, gesture.focus)) {
+        return;
+    }
+
+    gesture.focus = point;
+    gesture.moved = true;
+    ui.selected = { ...point };
+    ui.selection = selectionFromMarquee(gesture.anchor, gesture.focus);
+    refreshGridInteractionClasses();
+}
+
+function finishPointerSelection(event) {
+    const gesture = ui.rangeGesture;
+    if (
+        !gesture
+        || gesture.type !== "pointer"
+        || event.pointerId !== gesture.pointerId
+    ) {
+        return;
+    }
+
+    const point = gridCellAt(event.clientX, event.clientY);
+    if (point) {
+        gesture.focus = point;
+        ui.selection = selectionFromMarquee(gesture.anchor, gesture.focus);
+    }
+    ui.selected = ui.selection
+        ? { ...ui.selection.pivot }
+        : { ...gesture.focus };
+    ui.rangeGesture = null;
+    ui.suppressNextGridClick = true;
+    window.setTimeout(() => {
+        ui.suppressNextGridClick = false;
+    }, 0);
+    renderGrid();
+}
+
+function renderCell(x, y, tiles, coverage, interaction) {
     const cell = document.createElement("button");
     cell.type = "button";
     cell.className = "cell";
     cell.dataset.x = x;
     cell.dataset.y = y;
 
-    if (x === ui.selected.x && y === ui.selected.y) {
-        cell.classList.add("selected");
-    }
     if (x === 0 && y === 0) {
         cell.classList.add("origin");
     }
 
-    cell.addEventListener("click", () => {
-        ui.selected = { x, y };
-        renderGrid();
+    cell.addEventListener("pointerdown", (event) => {
+        beginPointerSelection(event, x, y);
     });
+    cell.addEventListener("click", (event) => handleCellClick(event, x, y));
     cell.addEventListener("dragover", (event) => event.preventDefault());
     cell.addEventListener("drop", (event) => {
         event.preventDefault();
@@ -1103,6 +1527,7 @@ function renderCell(x, y, tiles, coverage) {
     if (tile) {
         cell.append(renderBoardTile(tile, x, y, coverage));
     }
+    applyCellInteractionClasses(cell, x, y, interaction);
 
     return cell;
 }
@@ -1127,7 +1552,40 @@ function renderBoardTile(tile, x, y, coverage) {
 
     tileElement.addEventListener("dragstart", (event) => {
         event.stopPropagation();
-        ui.dragged = { type: "board", from: { x, y } };
+        if (event.shiftKey || ui.pendingBlockMove) {
+            event.preventDefault();
+            return;
+        }
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", "");
+        }
+
+        const point = { x, y };
+        let selectedBlock = null;
+        if (ui.selection && selectionContains(ui.selection, point)) {
+            selectedBlock = cloneSelection(ui.selection);
+        } else if (
+            ui.moveBuffer
+            && selectionContains(ui.moveBuffer.selection, point)
+        ) {
+            selectedBlock = cloneSelection(ui.moveBuffer.selection);
+        }
+        if (selectedBlock) {
+            ui.moveBuffer = null;
+            ui.selection = selectedBlock;
+            ui.selected = { ...selectedBlock.pivot };
+            ui.dragged = {
+                type: "selection",
+                selection: selectedBlock,
+                pivot: point,
+            };
+            return;
+        }
+
+        ui.selection = null;
+        ui.moveBuffer = null;
+        ui.dragged = { type: "board", from: point };
     });
 
     return tileElement;
@@ -1135,28 +1593,126 @@ function renderBoardTile(tile, x, y, coverage) {
 
 async function dropOnCell(x, y) {
     ui.selected = { x, y };
+    const dragged = ui.dragged;
 
-    if (!ui.dragged || (ui.state && ui.state.is_game_over)) {
+    if (!dragged || (ui.state && ui.state.is_game_over)) {
         return;
     }
 
-    if (ui.dragged.type === "rack") {
+    if (dragged.type === "rack") {
         await emitAction("place_tile", {
             x,
             y,
-            char: ui.dragged.char,
+            char: dragged.char,
             overwrite: false,
         });
-    }
-
-    if (ui.dragged.type === "board") {
+    } else if (dragged.type === "board") {
         await emitAction("move_tile", {
-            from: ui.dragged.from,
+            from: dragged.from,
             to: { x, y },
         });
+    } else if (dragged.type === "selection") {
+        await moveTileSelection(
+            dragged.selection,
+            dragged.pivot,
+            { x, y },
+        );
     }
 
     ui.dragged = null;
+}
+
+function armSelectionMove() {
+    const selection = currentTileSelection();
+    if (!selection || ui.state?.is_game_over || ui.pendingBlockMove) {
+        return false;
+    }
+
+    ui.selection = null;
+    ui.rangeGesture = null;
+    ui.moveBuffer = {
+        selection,
+        pivot: { ...selection.pivot },
+    };
+    ui.selected = { ...selection.pivot };
+    localInteractionMessage(
+        `${selection.points.length} tile${selection.points.length === 1 ? "" : "s"} ready to move. Choose a destination and paste.`,
+    );
+    renderGrid();
+    return true;
+}
+
+function cancelMoveBuffer() {
+    if (!ui.moveBuffer) {
+        return false;
+    }
+    ui.selection = cloneSelection(ui.moveBuffer.selection);
+    ui.selected = { ...ui.moveBuffer.pivot };
+    ui.moveBuffer = null;
+    ui.pendingBlockMove = null;
+    localInteractionMessage("Block move cancelled.");
+    renderGrid();
+    return true;
+}
+
+async function pasteSelection() {
+    if (
+        !ui.moveBuffer
+        || !ui.selected
+        || ui.state?.is_game_over
+        || ui.pendingBlockMove
+    ) {
+        return false;
+    }
+    await moveTileSelection(
+        ui.moveBuffer.selection,
+        ui.moveBuffer.pivot,
+        ui.selected,
+    );
+    return true;
+}
+
+async function moveTileSelection(selection, pivot, target) {
+    const movingFromCutBuffer = Boolean(ui.moveBuffer);
+    const offset = {
+        x: target.x - pivot.x,
+        y: target.y - pivot.y,
+    };
+    if (offset.x === 0 && offset.y === 0) {
+        ui.selection = cloneSelection(selection);
+        ui.moveBuffer = null;
+        ui.selected = { ...ui.selection.pivot };
+        renderGrid();
+        return { success: true };
+    }
+
+    ui.pendingBlockMove = {
+        selection: cloneSelection(selection),
+        offset,
+    };
+    const response = await emitAction("move_tiles", {
+        points: selection.points,
+        offset,
+        overwrite: Boolean(elements.overwriteBlockMoves?.checked),
+    });
+    if (!response.success) {
+        ui.pendingBlockMove = null;
+        if (!movingFromCutBuffer) {
+            ui.selection = cloneSelection(selection);
+            ui.selected = { ...ui.selection.pivot };
+        }
+        renderGrid();
+    }
+    return response;
+}
+
+async function removeTileSelection(selection) {
+    if (!selection || ui.state?.is_game_over) {
+        return { success: false };
+    }
+    return emitAction("remove_tiles", {
+        points: selection.points,
+    });
 }
 
 async function placeSelected(char, overwrite) {
@@ -1164,6 +1720,8 @@ async function placeSelected(char, overwrite) {
         return;
     }
 
+    ui.selection = null;
+    ui.moveBuffer = null;
     await emitAction("place_tile", {
         x: ui.selected.x,
         y: ui.selected.y,
@@ -1178,6 +1736,94 @@ async function removeSelected() {
     }
 
     await emitAction("remove_tile", ui.selected);
+}
+
+async function removeCurrentSelection() {
+    if (ui.moveBuffer) {
+        localInteractionMessage("Press Escape to cancel the pending block move before deleting tiles.");
+        return;
+    }
+    if (ui.selection) {
+        await removeTileSelection(ui.selection);
+        return;
+    }
+    await removeSelected();
+}
+
+function extendSelectionWithKeyboard(move) {
+    if (ui.moveBuffer) {
+        ui.selected = {
+            x: ui.selected.x + move.x,
+            y: ui.selected.y + move.y,
+        };
+        renderGrid();
+        return;
+    }
+
+    if (!ui.rangeGesture || ui.rangeGesture.type !== "keyboard") {
+        const existingSelection = ui.selection;
+        ui.rangeGesture = {
+            type: "keyboard",
+            anchor: existingSelection
+                ? oppositeCornerPoint(existingSelection)
+                : { ...ui.selected },
+            focus: existingSelection
+                ? { ...existingSelection.pivot }
+                : { ...ui.selected },
+        };
+    }
+
+    ui.rangeGesture.focus = {
+        x: ui.rangeGesture.focus.x + move.x,
+        y: ui.rangeGesture.focus.y + move.y,
+    };
+    ui.selected = { ...ui.rangeGesture.focus };
+    ui.selection = selectionFromMarquee(
+        ui.rangeGesture.anchor,
+        ui.rangeGesture.focus,
+    );
+    renderGrid();
+}
+
+function finishKeyboardSelection() {
+    if (!ui.rangeGesture || ui.rangeGesture.type !== "keyboard") {
+        return;
+    }
+    ui.selected = ui.selection
+        ? { ...ui.selection.pivot }
+        : { ...ui.rangeGesture.focus };
+    ui.rangeGesture = null;
+    renderGrid();
+}
+
+function moveCursor(move) {
+    if (ui.selection) {
+        ui.selected = { ...ui.selection.pivot };
+        ui.selection = null;
+    }
+    ui.rangeGesture = null;
+    ui.selected = {
+        x: ui.selected.x + move.x,
+        y: ui.selected.y + move.y,
+    };
+    renderGrid();
+}
+
+function handleEscape() {
+    if (elements.playersDrawer.classList.contains("open")) {
+        setPlayersOpen(false);
+        elements.playersToggle.focus();
+        return true;
+    }
+    if (cancelMoveBuffer()) {
+        return true;
+    }
+    if (ui.selection || ui.rangeGesture) {
+        clearRangeSelection();
+        renderGrid();
+        return true;
+    }
+    return false;
 }
 
 async function peel() {
@@ -1204,6 +1850,8 @@ async function dumpSelectedTile() {
         return;
     }
 
+    ui.selection = null;
+    ui.moveBuffer = null;
     const char = tile.char;
     const point = { ...ui.selected };
 
@@ -1344,6 +1992,10 @@ elements.joinForm.addEventListener("submit", async (event) => {
 
 elements.peelButton.addEventListener("click", peel);
 elements.copyGameLinkButton.addEventListener("click", copyGameLink);
+elements.overwriteBlockMoves?.addEventListener("change", () => {
+    savePreferences();
+    renderGrid();
+});
 
 elements.rack.addEventListener("dragover", (event) => event.preventDefault());
 elements.rack.addEventListener("drop", async (event) => {
@@ -1351,6 +2003,8 @@ elements.rack.addEventListener("drop", async (event) => {
     if (ui.dragged && ui.dragged.type === "board") {
         ui.selected = ui.dragged.from;
         await emitAction("remove_tile", ui.dragged.from);
+    } else if (ui.dragged && ui.dragged.type === "selection") {
+        await removeTileSelection(ui.dragged.selection);
     }
     ui.dragged = null;
 });
@@ -1358,6 +2012,9 @@ elements.rack.addEventListener("drop", async (event) => {
 document.addEventListener("dragend", () => {
     ui.dragged = null;
 });
+document.addEventListener("pointermove", updatePointerSelection);
+document.addEventListener("pointerup", finishPointerSelection);
+document.addEventListener("pointercancel", finishPointerSelection);
 
 document.addEventListener("keydown", async (event) => {
     if (document.querySelector("dialog[open]") || elements.gameView.hidden) {
@@ -1368,11 +2025,29 @@ document.addEventListener("keydown", async (event) => {
     if (activeTag === "INPUT" || activeTag === "TEXTAREA") {
         return;
     }
-
-    if (event.key === "Escape" && elements.playersDrawer.classList.contains("open")) {
+    if (ui.pendingBlockMove) {
         event.preventDefault();
-        setPlayersOpen(false);
-        elements.playersToggle.focus();
+        return;
+    }
+
+    const commandKey = event.ctrlKey || event.metaKey;
+    const normalizedKey = event.key.toLowerCase();
+    if (commandKey) {
+        if (normalizedKey === "c" || normalizedKey === "x") {
+            if (armSelectionMove()) {
+                event.preventDefault();
+            }
+        } else if (normalizedKey === "v" && ui.moveBuffer) {
+            event.preventDefault();
+            await pasteSelection();
+        }
+        return;
+    }
+
+    if (event.key === "Escape") {
+        if (handleEscape()) {
+            event.preventDefault();
+        }
         return;
     }
 
@@ -1382,9 +2057,9 @@ document.addEventListener("keydown", async (event) => {
         return;
     }
 
-    if (event.key === "Backspace" || event.key === "Delete" || event.key === "Escape") {
+    if (event.key === "Backspace" || event.key === "Delete" || event.code === "Backquote") {
         event.preventDefault();
-        await removeSelected();
+        await removeCurrentSelection();
         return;
     }
 
@@ -1410,11 +2085,17 @@ document.addEventListener("keydown", async (event) => {
     const move = moves[event.key];
     if (move) {
         event.preventDefault();
-        ui.selected = {
-            x: ui.selected.x + move.x,
-            y: ui.selected.y + move.y,
-        };
-        renderGrid();
+        if (event.shiftKey) {
+            extendSelectionWithKeyboard(move);
+        } else {
+            moveCursor(move);
+        }
+    }
+});
+
+document.addEventListener("keyup", (event) => {
+    if (event.key === "Shift") {
+        finishKeyboardSelection();
     }
 });
 
@@ -1457,6 +2138,7 @@ function initializeSocket() {
     });
     ui.socket.on("joined_game", (data) => {
         logIncomingTiming("joined_game", data);
+        resetBoardInteractions();
         ui.gameId = data.game_id;
         ui.playerId = data.player_id;
         ui.playerName = data.player_name || ui.pendingPlayerName;
@@ -1471,6 +2153,7 @@ function initializeSocket() {
     ui.socket.on("state", (state) => {
         logIncomingTiming("state", state);
         const renderStartedAt = performance.now();
+        resetBoardInteractions();
         render(state);
         logRenderTiming("state", state, renderStartedAt);
     });
@@ -1493,6 +2176,7 @@ function initializeSocket() {
 }
 
 const initialSession = savedSession();
+initializePreferences();
 if (initialSession?.playerName) {
     elements.nicknameInput.value = initialSession.playerName;
 }

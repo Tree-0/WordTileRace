@@ -606,6 +606,31 @@ input {
     outline-offset: -3px;
 }
 
+.cell.range-selected .tile {
+    box-shadow: 0 0 0 3px var(--accent);
+}
+
+.cell.selection-pivot {
+    box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.cell.cut-source .tile {
+    opacity: 0.52;
+    box-shadow: 0 0 0 2px var(--accent);
+}
+
+.cell.move-preview {
+    box-shadow: inset 0 0 0 2px var(--good);
+}
+
+.cell.move-preview-blocked {
+    box-shadow: inset 0 0 0 3px var(--bad);
+}
+
+.cell.move-preview-displace {
+    box-shadow: inset 0 0 0 3px var(--warning);
+}
+
 .cell.origin::after {
     content: "0,0";
     position: absolute;
@@ -662,6 +687,36 @@ input {
 
 .side-panel section {
     padding: 12px;
+}
+
+.preference-option {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 9px;
+    cursor: pointer;
+}
+
+.preference-option input {
+    width: 18px;
+    height: 18px;
+    min-height: 0;
+    margin: 2px 0 0;
+}
+
+.preference-option span {
+    display: grid;
+    gap: 3px;
+}
+
+.preference-option strong {
+    font-size: 0.84rem;
+}
+
+.preference-option small {
+    color: var(--muted);
+    font-size: 0.74rem;
+    line-height: 1.35;
 }
 
 .game-id-row {

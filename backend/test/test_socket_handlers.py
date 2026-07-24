@@ -314,6 +314,113 @@ class SocketHandlerTests(unittest.TestCase):
         self.assertEqual(diff_events[-1]["tile"]["char"], "B")
         self.assertIn("partial_validation", diff_events[-1])
 
+    def test_block_move_overwrite_is_atomic_and_emits_displaced_tiles(self):
+        app, store = self.make_app_and_store()
+        client = socketio.test_client(app)
+        ack = self.emit_ack(client, "create_game", {
+            "mode": "custom",
+            "letters": "BEX",
+        })
+        for x, char in enumerate("BEX"):
+            self.emit_ack(client, "place_tile", {
+                "x": x,
+                "y": 0,
+                "char": char,
+            })
+        client.get_received()
+
+        action_ack = self.emit_ack(client, "move_tiles", {
+            "points": [{"x": 0, "y": 0}, {"x": 1, "y": 0}],
+            "offset": {"x": 1, "y": 0},
+            "overwrite": True,
+        })
+        diff_events = [
+            event["args"][0]
+            for event in client.get_received()
+            if event["name"] == "state_diff"
+        ]
+        player = store.get(ack["game_id"]).get_player_state(ack["player_id"])
+
+        self.assertTrue(action_ack["success"])
+        self.assertEqual(diff_events[-1]["type"], "tiles_moved")
+        self.assertEqual(diff_events[-1]["rack_delta"], {"X": 1})
+        self.assertEqual(diff_events[-1]["displaced"][0]["tile"]["char"], "X")
+        self.assertEqual(
+            {
+                (point.x, point.y): tile.char
+                for point, tile in player.board.placed_tiles.items()
+            },
+            {(1, 0): "B", (2, 0): "E"},
+        )
+
+    def test_block_move_collision_rejects_without_partial_mutation(self):
+        app, store = self.make_app_and_store()
+        client = socketio.test_client(app)
+        ack = self.emit_ack(client, "create_game", {
+            "mode": "custom",
+            "letters": "BEX",
+        })
+        for x, char in enumerate("BEX"):
+            self.emit_ack(client, "place_tile", {
+                "x": x,
+                "y": 0,
+                "char": char,
+            })
+        client.get_received()
+
+        action_ack = self.emit_ack(client, "move_tiles", {
+            "points": [{"x": 0, "y": 0}, {"x": 1, "y": 0}],
+            "offset": {"x": 1, "y": 0},
+            "overwrite": False,
+        })
+        player = store.get(ack["game_id"]).get_player_state(ack["player_id"])
+
+        self.assertFalse(action_ack["success"])
+        self.assertIn("overlap existing tiles", action_ack["message"])
+        self.assertEqual(
+            {
+                (point.x, point.y): tile.char
+                for point, tile in player.board.placed_tiles.items()
+            },
+            {(0, 0): "B", (1, 0): "E", (2, 0): "X"},
+        )
+
+    def test_remove_tiles_returns_the_selected_block_to_the_rack(self):
+        app, store = self.make_app_and_store()
+        client = socketio.test_client(app)
+        ack = self.emit_ack(client, "create_game", {
+            "mode": "custom",
+            "letters": "BEX",
+        })
+        for x, char in enumerate("BEX"):
+            self.emit_ack(client, "place_tile", {
+                "x": x,
+                "y": 0,
+                "char": char,
+            })
+        client.get_received()
+
+        action_ack = self.emit_ack(client, "remove_tiles", {
+            "points": [{"x": 0, "y": 0}, {"x": 2, "y": 0}],
+        })
+        diff_events = [
+            event["args"][0]
+            for event in client.get_received()
+            if event["name"] == "state_diff"
+        ]
+        player = store.get(ack["game_id"]).get_player_state(ack["player_id"])
+
+        self.assertTrue(action_ack["success"])
+        self.assertEqual(diff_events[-1]["type"], "tiles_removed")
+        self.assertEqual(diff_events[-1]["rack_delta"], {"B": 1, "X": 1})
+        self.assertEqual(
+            {
+                (point.x, point.y): tile.char
+                for point, tile in player.board.placed_tiles.items()
+            },
+            {(1, 0): "E"},
+        )
+
     def test_local_board_diff_only_goes_to_acting_player(self):
         app, _ = self.make_app_and_store()
         first_client = socketio.test_client(app)

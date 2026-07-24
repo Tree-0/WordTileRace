@@ -39,6 +39,7 @@ class AppTests(unittest.TestCase):
         self.assertIn(b'id="home-button"', response.data)
         self.assertIn(b'id="nickname-input"', response.data)
         self.assertIn(b'id="players-drawer"', response.data)
+        self.assertIn(b'id="overwrite-block-moves"', response.data)
         self.assertIn(b'id="help-dialog"', response.data)
         self.assertIn(b'id="winner-dialog"', response.data)
 

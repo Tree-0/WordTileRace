@@ -179,6 +179,37 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(remove_result["rack_delta"], {"B": 1})
         self.assertIn("partial_validation", remove_result)
 
+    def test_block_actions_include_atomic_diffs_and_rack_changes(self):
+        session = GameSession.new_game("BEX", board_factory=make_board)
+        player_state = session.add_player("TestPlayer")
+        player_id = player_state.player.id
+        session.place_tile(player_id, "B", 0, 0)
+        session.place_tile(player_id, "E", 1, 0)
+        session.place_tile(player_id, "X", 2, 0)
+
+        move_result = session.move_tiles(
+            player_id,
+            [Point(0, 0), Point(1, 0)],
+            Point(1, 0),
+            overwrite=True,
+        )
+
+        self.assertEqual(move_result["type"], "tiles_moved")
+        self.assertEqual(len(move_result["moves"]), 2)
+        self.assertEqual(move_result["displaced"][0]["tile"]["char"], "X")
+        self.assertEqual(move_result["rack_delta"], {"X": 1})
+        self.assertIn("partial_validation", move_result)
+
+        remove_result = session.remove_tiles(
+            player_id,
+            [Point(1, 0), Point(2, 0)],
+        )
+
+        self.assertEqual(remove_result["type"], "tiles_removed")
+        self.assertEqual(len(remove_result["removed"]), 2)
+        self.assertEqual(remove_result["rack_delta"], {"B": 1, "E": 1})
+        self.assertEqual(player_state.board.placed_tiles, {})
+
     def test_peel_draws_one_tile_for_every_player(self):
         session = GameSession.new_game(rng=random.Random(1), board_factory=make_board)
         first = session.add_player("One")

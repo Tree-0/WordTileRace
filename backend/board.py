@@ -125,6 +125,85 @@ class Board:
         self.placed_tiles[to_point] = tile
         return tile
 
+    def move_tiles(
+        self,
+        from_points: Iterable[Point],
+        offset: Point,
+        *,
+        overwrite: bool = False,
+    ) -> tuple[list[tuple[Point, Point, Tile]], dict[Point, Tile]]:
+        """
+        Translate a group of placed tiles atomically.
+
+        Destinations occupied by another moving tile are allowed. Other occupied
+        destinations reject the move unless overwrite is enabled, in which case
+        those tiles are returned to the rack.
+        """
+        sources = list(from_points)
+        source_set = set(sources)
+        if not sources:
+            raise ValueError("Select at least one tile to move.")
+        if len(source_set) != len(sources):
+            raise ValueError("Selected tile coordinates must be unique.")
+
+        missing = [point for point in sources if point not in self.placed_tiles]
+        if missing:
+            point = missing[0]
+            raise ValueError(f"No tile placed at ({point.x}, {point.y})")
+
+        ordered_sources = sorted(source_set, key=lambda point: (point.y, point.x))
+        moves = [
+            (
+                source,
+                Point(source.x + offset.x, source.y + offset.y),
+                self.placed_tiles[source],
+            )
+            for source in ordered_sources
+        ]
+        destination_set = {destination for _, destination, _ in moves}
+        conflicts = destination_set.intersection(self.placed_tiles) - source_set
+        if conflicts and not overwrite:
+            raise ValueError("Selection would overlap existing tiles.")
+
+        displaced = {
+            point: self.placed_tiles[point]
+            for point in sorted(conflicts, key=lambda point: (point.y, point.x))
+        }
+
+        for source in source_set:
+            del self.placed_tiles[source]
+        for point, tile in displaced.items():
+            del self.placed_tiles[point]
+            self.unplaced_letters[tile.char] += 1
+        for _, destination, tile in moves:
+            self.placed_tiles[destination] = tile
+
+        return moves, displaced
+
+    def remove_letters(self, points: Iterable[Point]) -> dict[Point, Tile]:
+        """Return multiple placed tiles to the rack atomically."""
+        selected = list(points)
+        selected_set = set(selected)
+        if not selected:
+            raise ValueError("Select at least one tile to remove.")
+        if len(selected_set) != len(selected):
+            raise ValueError("Selected tile coordinates must be unique.")
+
+        missing = [point for point in selected if point not in self.placed_tiles]
+        if missing:
+            point = missing[0]
+            raise ValueError(f"No tile placed at ({point.x}, {point.y})")
+
+        removed = {
+            point: self.placed_tiles[point]
+            for point in sorted(selected_set, key=lambda point: (point.y, point.x))
+        }
+        for point, tile in removed.items():
+            del self.placed_tiles[point]
+            self.unplaced_letters[tile.char] += 1
+
+        return removed
+
     def remove_letter(self, x: int, y: int) -> bool:
         """
         Removes a letter from the board. If no letter is present at the 
