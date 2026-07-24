@@ -1,6 +1,7 @@
 from collections import Counter
 import random
 import unittest
+from uuid import UUID
 
 from backend.app import create_app
 from backend.board import Board
@@ -68,6 +69,72 @@ class SocketHandlerTests(unittest.TestCase):
             if event["name"] == "joined_game"
         ]
         self.assertEqual(joined_events[-1]["player_name"], "Alice Smith")
+
+    def test_create_game_accepts_custom_id_and_join_is_case_insensitive(self):
+        app, store = self.make_app_and_store()
+        first_client = socketio.test_client(app)
+
+        first_ack = self.emit_ack(first_client, "create_game", {
+            "mode": "random",
+            "game_id": "  Friday-Game-42  ",
+            "player_name": "Alice",
+        })
+        second_client = socketio.test_client(app)
+        second_ack = self.emit_ack(second_client, "join_game", {
+            "game_id": "FRIDAY-GAME-42",
+            "player_name": "Bob",
+        })
+
+        self.assertTrue(first_ack["success"])
+        self.assertEqual(first_ack["game_id"], "friday-game-42")
+        self.assertTrue(first_ack["invite_url"].endswith("?game=friday-game-42"))
+        self.assertTrue(second_ack["success"])
+        self.assertEqual(second_ack["game_id"], "friday-game-42")
+        self.assertEqual(len(store.get("friday-game-42").player_state), 2)
+
+    def test_create_game_rejects_duplicate_custom_id_case_insensitively(self):
+        app, store = self.make_app_and_store()
+        first_client = socketio.test_client(app)
+        second_client = socketio.test_client(app)
+
+        first_ack = self.emit_ack(first_client, "create_game", {
+            "mode": "random",
+            "game_id": "friends-only",
+        })
+        second_ack = self.emit_ack(second_client, "create_game", {
+            "mode": "custom",
+            "letters": "BE",
+            "game_id": "FRIENDS-ONLY",
+        })
+
+        self.assertTrue(first_ack["success"])
+        self.assertFalse(second_ack["success"])
+        self.assertEqual(
+            second_ack["message"],
+            "That game ID is already in use. Choose another one.",
+        )
+        self.assertEqual(len(store.get("friends-only").player_state), 1)
+
+    def test_create_game_rejects_invalid_custom_id(self):
+        app, _ = self.make_app_and_store()
+        client = socketio.test_client(app)
+
+        ack = self.emit_ack(client, "create_game", {
+            "mode": "random",
+            "game_id": "not valid!",
+        })
+
+        self.assertFalse(ack["success"])
+        self.assertIn("letters, numbers, and single hyphens", ack["message"])
+
+    def test_create_game_without_custom_id_returns_uuid(self):
+        app, _ = self.make_app_and_store()
+        client = socketio.test_client(app)
+
+        ack = self.emit_ack(client, "create_game", {"mode": "random"})
+
+        self.assertTrue(ack["success"])
+        self.assertEqual(str(UUID(ack["game_id"])), ack["game_id"])
 
     def test_create_game_applies_truncated_and_capped_bag_multiplier(self):
         app, store = self.make_app_and_store()

@@ -1,10 +1,14 @@
 from collections import Counter
 import random
 import unittest
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from backend.board import Board, Point, Tile
-from backend.game_session import GameSession, MAX_UNDO_HISTORY
+from backend.game_session import (
+    GameSession,
+    MAX_CUSTOM_GAME_ID_LENGTH,
+    MAX_UNDO_HISTORY,
+)
 from backend.test.test_board import FakeTrie
 
 
@@ -26,6 +30,42 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(player_state.rack_count, 21)
         self.assertEqual(session.bag_count, 123)
         self.assertEqual(session.player_state[player_state.player.id], player_state)
+        self.assertEqual(str(UUID(session.game_id)), session.game_id)
+
+    def test_custom_game_id_is_normalized_and_round_trips(self):
+        session = GameSession.new_game(
+            rng=random.Random(2),
+            board_factory=make_board,
+            custom_game_id="  Friday-Game-42  ",
+        )
+
+        restored = GameSession.from_record(
+            session.to_record(),
+            board_factory=make_board,
+        )
+
+        self.assertEqual(session.game_id, "friday-game-42")
+        self.assertEqual(restored.game_id, "friday-game-42")
+
+    def test_custom_game_id_rejects_unsupported_values(self):
+        invalid_ids = [
+            123,
+            "ab",
+            "a" * (MAX_CUSTOM_GAME_ID_LENGTH + 1),
+            "-friday",
+            "friday-",
+            "friday--game",
+            "friday game",
+            "friday_game",
+        ]
+
+        for game_id in invalid_ids:
+            with self.subTest(game_id=game_id):
+                with self.assertRaisesRegex(ValueError, "Custom game ID"):
+                    GameSession.new_game(
+                        board_factory=make_board,
+                        custom_game_id=game_id,
+                    )
 
     def test_custom_game_adds_player_with_custom_rack_and_standard_bag(self):
         session = GameSession.new_game(

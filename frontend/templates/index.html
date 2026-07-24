@@ -43,6 +43,26 @@
                 <section class="lobby-action" aria-labelledby="new-match-title">
                     <h2 id="new-match-title">New match</h2>
                     <p>Start with 21 random tiles from the standard bag.</p>
+                    <div class="new-game-id-field">
+                        <label for="custom-game-id">Custom game ID <span>(optional)</span></label>
+                        <p id="custom-game-id-help" class="field-help">
+                            Use 3-24 letters or numbers, with optional single hyphens.
+                            Leave blank for a generated ID.
+                        </p>
+                        <input
+                            id="custom-game-id"
+                            name="game_id"
+                            type="text"
+                            minlength="3"
+                            maxlength="24"
+                            pattern="[A-Za-z0-9]+(-[A-Za-z0-9]+)*"
+                            placeholder="friday-game"
+                            autocomplete="off"
+                            autocapitalize="none"
+                            spellcheck="false"
+                            aria-describedby="custom-game-id-help"
+                        >
+                    </div>
                     <button id="random-game-button" class="wide-button" type="button">
                         Create Random Match
                     </button>

@@ -32,6 +32,8 @@ class AppTests(unittest.TestCase):
         self.assertIn(b'id="random-game-button"', response.data)
         self.assertIn(b'id="join-game-form"', response.data)
         self.assertIn(b'id="new-game-settings"', response.data)
+        self.assertIn(b'id="custom-game-id"', response.data)
+        self.assertIn(b'maxlength="24"', response.data)
         self.assertIn(b'id="custom-bag-multiplier"', response.data)
         self.assertIn(b'<span>NONE</span>', response.data)
         self.assertIn(b'Maximum 4&times;', response.data)

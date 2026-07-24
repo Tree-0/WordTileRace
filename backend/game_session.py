@@ -5,6 +5,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 import random
+import re
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -25,6 +26,31 @@ from backend.tile_bag import (
 BoardFactory = Callable[[Any], Board]
 MAX_PLAYER_NAME_LENGTH = 24
 MAX_UNDO_HISTORY = 8
+MIN_CUSTOM_GAME_ID_LENGTH = 3
+MAX_CUSTOM_GAME_ID_LENGTH = 24
+CUSTOM_GAME_ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+def normalize_custom_game_id(game_id: object) -> str | None:
+    if game_id is None:
+        return None
+    if not isinstance(game_id, str):
+        raise ValueError("Custom game ID must be text.")
+
+    normalized = game_id.strip().lower()
+    if not normalized:
+        return None
+    if not MIN_CUSTOM_GAME_ID_LENGTH <= len(normalized) <= MAX_CUSTOM_GAME_ID_LENGTH:
+        raise ValueError(
+            "Custom game ID must be between "
+            f"{MIN_CUSTOM_GAME_ID_LENGTH} and {MAX_CUSTOM_GAME_ID_LENGTH} characters."
+        )
+    if CUSTOM_GAME_ID_PATTERN.fullmatch(normalized) is None:
+        raise ValueError(
+            "Custom game ID can contain letters, numbers, and single hyphens, "
+            "and must begin and end with a letter or number."
+        )
+    return normalized
 
 
 def _point_payload(point: Point) -> dict[str, int]:
@@ -58,7 +84,7 @@ def _counter_delta(before: Counter[str], after: Counter[str]) -> dict[str, int]:
 class GameSession:
     """Authoritative word-tile session state."""
 
-    game_id: UUID
+    game_id: str
     bag: Counter[str]
     rng: random.Random
     player_state: dict[UUID, PlayerState]
@@ -76,9 +102,11 @@ class GameSession:
         rng: random.Random | None = None,
         board_factory: BoardFactory = Board,
         bag_multiplier: object = DEFAULT_BAG_MULTIPLIER,
+        custom_game_id: object = None,
     ) -> "GameSession":
         rng = rng or random.Random()
         normalized_multiplier = normalize_bag_multiplier(bag_multiplier)
+        normalized_game_id = normalize_custom_game_id(custom_game_id)
         bag = make_tile_bag(normalized_multiplier)
         is_custom_mode = letters is not None
         normalized_letters = letters.strip() if letters is not None else ""
@@ -93,7 +121,7 @@ class GameSession:
             )
 
         return cls(
-            game_id=uuid4(),
+            game_id=normalized_game_id or str(uuid4()),
             bag=bag,
             rng=rng,
             player_state={},
@@ -557,7 +585,7 @@ class GameSession:
         )
         player_state: dict[UUID, PlayerState] = {}
         session = cls(
-            game_id=UUID(str(record["game_id"])),
+            game_id=str(record["game_id"]),
             bag=bag,
             rng=rng,
             player_state=player_state,

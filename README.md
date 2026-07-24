@@ -95,8 +95,13 @@ returning players automatically. Gameplay actions are sent over Socket.IO to the
 server, where `GameSession` validates and applies them before broadcasting updated
 private player state. The collapsible tab on the left shows everyone in the match.
 
-The sidebar shows the current raw game id and has a copy button for a full
-invite URL:
+When creating either kind of match, the host can optionally choose a
+case-insensitive custom game ID with 3-24 letters or numbers and single hyphens
+between groups. Custom IDs must be unique among active games. Leaving the field
+blank generates a UUID as before.
+
+The sidebar shows the current game ID and has a copy button for a full invite
+URL:
 
 ```text
 https://your-host.example/?game=<game-id>

@@ -2,6 +2,9 @@ const GRID_PADDING = 4;
 const MIN_GRID_SIZE = 13;
 const SESSION_STORAGE_KEY = "wordTileRaceSession";
 const PREFERENCES_STORAGE_KEY = "wordTileRacePreferences";
+const MIN_CUSTOM_GAME_ID_LENGTH = 3;
+const MAX_CUSTOM_GAME_ID_LENGTH = 24;
+const CUSTOM_GAME_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const SOCKET_TIMING_DEBUG =
     new URLSearchParams(window.location.search).has("debugTiming") ||
@@ -13,6 +16,7 @@ const elements = {
     homeView: document.querySelector("#home-view"),
     gameView: document.querySelector("#game-view"),
     customForm: document.querySelector("#custom-game-form"),
+    customGameId: document.querySelector("#custom-game-id"),
     customLetters: document.querySelector("#custom-letters"),
     bagMultiplierChoices: document.querySelectorAll('[name="bag_multiplier_choice"]'),
     customBagMultiplierWrap: document.querySelector("#custom-bag-multiplier-wrap"),
@@ -236,14 +240,14 @@ function gameIdFromInput(value) {
         const url = new URL(trimmed, window.location.href);
         const linkedGameId = url.searchParams.get("game");
         if (linkedGameId && linkedGameId.trim()) {
-            return linkedGameId.trim();
+            return linkedGameId.trim().toLowerCase();
         }
     } catch (error) {
         // Malformed links fall through to the raw-ID check below.
     }
 
     const looksLikeLink = /^(?:https?:\/\/|\/|\?)/i.test(trimmed);
-    return looksLikeLink ? null : trimmed;
+    return looksLikeLink ? null : trimmed.toLowerCase();
 }
 
 function setLobbyMessage(message, pending = false) {
@@ -266,6 +270,46 @@ function requiredPlayerName() {
 
     elements.nicknameInput.value = playerName;
     return playerName;
+}
+
+function requestedCustomGameId() {
+    const normalized = elements.customGameId.value.trim().toLowerCase();
+    elements.customGameId.value = normalized;
+    elements.customGameId.removeAttribute("aria-invalid");
+    if (!normalized) {
+        return "";
+    }
+    if (
+        normalized.length < MIN_CUSTOM_GAME_ID_LENGTH
+        || normalized.length > MAX_CUSTOM_GAME_ID_LENGTH
+    ) {
+        setLobbyMessage(
+            `Custom game ID must be between ${MIN_CUSTOM_GAME_ID_LENGTH} `
+            + `and ${MAX_CUSTOM_GAME_ID_LENGTH} characters.`,
+        );
+        elements.customGameId.setAttribute("aria-invalid", "true");
+        elements.customGameId.focus();
+        return null;
+    }
+    if (!CUSTOM_GAME_ID_PATTERN.test(normalized)) {
+        setLobbyMessage(
+            "Custom game ID can contain letters, numbers, and single hyphens, "
+            + "and must begin and end with a letter or number.",
+        );
+        elements.customGameId.setAttribute("aria-invalid", "true");
+        elements.customGameId.focus();
+        return null;
+    }
+    return normalized;
+}
+
+function showCreateGameFailure(response, fallbackMessage) {
+    setLobbyMessage(response.message || fallbackMessage);
+    if (response.message?.includes("game ID is already in use")) {
+        elements.customGameId.setAttribute("aria-invalid", "true");
+        elements.customGameId.focus();
+        elements.customGameId.select();
+    }
 }
 
 function showGameView(gameId) {
@@ -1950,6 +1994,10 @@ elements.customForm.addEventListener("submit", async (event) => {
     if (!playerName) {
         return;
     }
+    const gameId = requestedCustomGameId();
+    if (gameId === null) {
+        return;
+    }
     const bagMultiplier = selectedBagMultiplier();
     if (bagMultiplier === null) {
         return;
@@ -1969,15 +2017,20 @@ elements.customForm.addEventListener("submit", async (event) => {
         letters: customLetters,
         bag_multiplier: bagMultiplier,
         player_name: playerName,
+        game_id: gameId,
     });
     if (!response.success) {
-        setLobbyMessage(response.message || "Could not create the match.");
+        showCreateGameFailure(response, "Could not create the match.");
     }
 });
 
 elements.randomButton.addEventListener("click", async () => {
     const playerName = requiredPlayerName();
     if (!playerName) {
+        return;
+    }
+    const gameId = requestedCustomGameId();
+    if (gameId === null) {
         return;
     }
     ui.selected = { x: 0, y: 0 };
@@ -1987,9 +2040,10 @@ elements.randomButton.addEventListener("click", async () => {
     const response = await emitAction("create_game", {
         mode: "random",
         player_name: playerName,
+        game_id: gameId,
     });
     if (!response.success) {
-        setLobbyMessage(response.message || "Could not create the match.");
+        showCreateGameFailure(response, "Could not create the match.");
     }
 });
 
@@ -2141,7 +2195,7 @@ function initializeSocket() {
     ui.socket = window.io();
     ui.socket.on("connect", async () => {
         const params = new URLSearchParams(window.location.search);
-        const gameId = params.get("game");
+        const gameId = params.get("game")?.trim().toLowerCase();
         const saved = savedSession();
         if (gameId) {
             elements.joinInput.value = gameId;

@@ -193,6 +193,37 @@ input {
     line-height: 1.45;
 }
 
+.new-game-id-field {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.new-game-id-field label {
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+
+.new-game-id-field label span {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 400;
+}
+
+.new-game-id-field input {
+    width: 100%;
+    text-transform: none;
+}
+
+.new-game-id-field input[aria-invalid="true"] {
+    border-color: var(--bad);
+    box-shadow: 0 0 0 1px var(--bad);
+}
+
+.new-game-id-field .field-help {
+    margin: 0;
+}
+
 .wide-button {
     width: 100%;
 }

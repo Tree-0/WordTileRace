@@ -8,7 +8,7 @@ from uuid import UUID
 
 from backend.board import Board, Point
 from backend.config import AppConfig
-from backend.game_session import GameSession
+from backend.game_session import GameSession, normalize_custom_game_id
 from backend.game_store import GameStore, MemoryGameStore
 
 try:
@@ -84,18 +84,21 @@ def register_socket_handlers(
             letters = payload.get("letters")
             bag_multiplier = payload.get("bag_multiplier", 1)
             player_name = payload.get("player_name")
+            custom_game_id = normalize_custom_game_id(payload.get("game_id"))
             if mode == "custom":
                 session = GameSession.new_game(
                     str(letters or ""),
                     rng=rng,
                     board_factory=board_factory,
                     bag_multiplier=bag_multiplier,
+                    custom_game_id=custom_game_id,
                 )
             elif mode == "random":
                 session = GameSession.new_game(
                     rng=rng,
                     board_factory=board_factory,
                     bag_multiplier=bag_multiplier,
+                    custom_game_id=custom_game_id,
                 )
             else:
                 raise ValueError("Mode must be custom or random.")
@@ -103,6 +106,10 @@ def register_socket_handlers(
             player_state = session.add_player(player_name)
             game_id = str(session.game_id)
             with store.lock(game_id):
+                if store.get(game_id) is not None:
+                    raise ValueError(
+                        "That game ID is already in use. Choose another one."
+                    )
                 store.save(session)
 
             _bind_connection(game_id, player_state.player.id)
@@ -122,7 +129,7 @@ def register_socket_handlers(
         try:
             payload = _payload(payload)
             _leave_existing_rooms()
-            game_id = str(payload.get("game_id", "")).strip()
+            game_id = str(payload.get("game_id", "")).strip().lower()
             if not game_id:
                 raise ValueError("Game id is required.")
 
