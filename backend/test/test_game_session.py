@@ -3,7 +3,7 @@ import random
 import unittest
 from uuid import uuid4
 
-from backend.board import Board, Point
+from backend.board import Board, Point, Tile
 from backend.game_session import GameSession, MAX_UNDO_HISTORY
 from backend.test.test_board import FakeTrie
 
@@ -254,6 +254,12 @@ class GameSessionTests(unittest.TestCase):
         restored_player = restored.get_player_state(player_id)
 
         self.assertEqual(len(restored.undo_history[player_id]), MAX_UNDO_HISTORY)
+        self.assertIn("cells", restored.undo_history[player_id][-1])
+        self.assertEqual(
+            restored.undo_history[player_id][-1]["rack_delta"],
+            {"B": -1},
+        )
+        self.assertNotIn("board", restored.undo_history[player_id][-1])
         for _ in range(MAX_UNDO_HISTORY):
             result = restored.undo(player_id)
 
@@ -266,7 +272,7 @@ class GameSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no board edits"):
             restored.undo(player_id)
 
-    def test_dump_and_peel_clear_undo_history(self):
+    def test_dump_clears_undo_history(self):
         dump_session = GameSession.new_game("BE", board_factory=make_board)
         dump_player = dump_session.add_player("Dumper")
         dump_session.place_tile(dump_player.player.id, "B", 0, 0)
@@ -278,17 +284,54 @@ class GameSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no board edits"):
             dump_session.undo(dump_player.player.id)
 
+    def test_peel_additions_survive_earlier_undo_patches(self):
         peel_session = GameSession.new_game("BE", board_factory=make_board)
         peel_player = peel_session.add_player("Peeler")
-        peel_session.place_tile(peel_player.player.id, "B", 0, 0)
-        peel_session.place_tile(peel_player.player.id, "E", 1, 0)
-        peel_session.peel(peel_player.player.id)
+        player_id = peel_player.player.id
+        peel_session.place_tile(player_id, "B", 0, 0)
+        peel_session.place_tile(player_id, "E", 1, 0)
 
-        self.assertFalse(
-            peel_session.private_state(peel_player.player.id)["can_undo"]
+        peel_result = peel_session.peel(player_id)
+        drawn = Counter(peel_result["drawn_by_player"][str(player_id)])
+
+        self.assertTrue(peel_session.private_state(player_id)["can_undo"])
+        first_undo = peel_session.undo(player_id)
+        self.assertTrue(first_undo["can_undo"])
+        self.assertEqual(
+            peel_player.board.unplaced_letters,
+            Counter({"E": 1}) + drawn,
         )
-        with self.assertRaisesRegex(ValueError, "no board edits"):
-            peel_session.undo(peel_player.player.id)
+        self.assertEqual(
+            {
+                (point.x, point.y): tile.char
+                for point, tile in peel_player.board.placed_tiles.items()
+            },
+            {(0, 0): "B"},
+        )
+
+        second_undo = peel_session.undo(player_id)
+        self.assertFalse(second_undo["can_undo"])
+        self.assertEqual(
+            peel_player.board.unplaced_letters,
+            Counter("BE") + drawn,
+        )
+        self.assertEqual(peel_player.board.placed_tiles, {})
+
+    def test_undo_patch_rejects_unexpected_board_without_mutating(self):
+        session = GameSession.new_game("BE", board_factory=make_board)
+        player_state = session.add_player("TestPlayer")
+        player_id = player_state.player.id
+        session.place_tile(player_id, "B", 0, 0)
+        player_state.board.placed_tiles[Point(0, 0)] = Tile("E")
+        before_tiles = player_state.board.placed_tiles.copy()
+        before_rack = player_state.board.unplaced_letters.copy()
+
+        with self.assertRaisesRegex(ValueError, "board changed"):
+            session.undo(player_id)
+
+        self.assertEqual(player_state.board.placed_tiles, before_tiles)
+        self.assertEqual(player_state.board.unplaced_letters, before_rack)
+        self.assertEqual(len(session.undo_history[player_id]), 1)
 
     def test_peel_draws_one_tile_for_every_player(self):
         session = GameSession.new_game(rng=random.Random(1), board_factory=make_board)

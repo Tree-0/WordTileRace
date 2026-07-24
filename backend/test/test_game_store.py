@@ -1,4 +1,5 @@
 from collections import Counter
+import json
 import random
 import unittest
 
@@ -90,8 +91,14 @@ class GameStoreTests(unittest.TestCase):
 
         store.save(session)
         restored = store.get(str(session.game_id))
+        stored_record = json.loads(
+            redis_client.values[f"game:{session.game_id}"]
+        )
+        stored_undo = stored_record["players"][0]["undo_history"][0]
 
         self.assertEqual(redis_client.ttls[f"game:{session.game_id}"], 60)
+        self.assertIn("cells", stored_undo)
+        self.assertNotIn("board", stored_undo)
         self.assertEqual(restored.game_id, session.game_id)
         self.assertEqual(
             restored.get_player_state(player_state.player.id).board.to_state()["placed_tiles"][0]["char"],

@@ -48,7 +48,7 @@ scope of the current match (no player stats, streaks, etc.).
 - Drag any tile in a selected block to move the whole block.
 - Press `Escape` to cancel a pending block move or collapse a selection.
 - Press `Ctrl/Cmd + Z` or click `Undo` to undo one of the last eight board
-  edits. Peel and Dump clear the undo history.
+  edits. Peel preserves undo history; Dump clears it.
 - Click `Peel` when it is enabled, or press `Space`, to draw one tile for every
   player.
 - Press `Ctrl/Cmd + D` to dump the tile on the selected board cell.

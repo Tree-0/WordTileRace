@@ -163,8 +163,7 @@ class GameSession:
     ) -> dict:
         self._ensure_active()
         player_state = self._get_player_state(player_id)
-        before_board = self._board_snapshot(player_state.board)
-        before_rack = player_state.board.unplaced_letters.copy()
+        before_tiles, before_rack = self._capture_board_edit(player_state.board)
         point = Point(x, y)
         if overwrite:
             tile = player_state.board.place_or_overwrite_tile(char, x, y)
@@ -172,7 +171,8 @@ class GameSession:
             tile = player_state.board.place_tile(char, x, y)
         self._remember_board_edit(
             player_state,
-            before_board,
+            before_tiles,
+            before_rack,
             "tile placement",
         )
         return {
@@ -197,9 +197,14 @@ class GameSession:
     ) -> dict:
         self._ensure_active()
         player_state = self._get_player_state(player_id)
-        before_board = self._board_snapshot(player_state.board)
+        before_tiles, before_rack = self._capture_board_edit(player_state.board)
         tile = player_state.board.move_tile(from_point, to_point)
-        self._remember_board_edit(player_state, before_board, "tile move")
+        self._remember_board_edit(
+            player_state,
+            before_tiles,
+            before_rack,
+            "tile move",
+        )
         return {
             "type": "tile_moved",
             "from": _point_payload(from_point),
@@ -223,14 +228,18 @@ class GameSession:
     ) -> dict:
         self._ensure_active()
         player_state = self._get_player_state(player_id)
-        before_board = self._board_snapshot(player_state.board)
-        before_rack = player_state.board.unplaced_letters.copy()
+        before_tiles, before_rack = self._capture_board_edit(player_state.board)
         moves, displaced = player_state.board.move_tiles(
             from_points,
             offset,
             overwrite=overwrite,
         )
-        self._remember_board_edit(player_state, before_board, "block move")
+        self._remember_board_edit(
+            player_state,
+            before_tiles,
+            before_rack,
+            "block move",
+        )
         affected_points = [
             point
             for source, destination, _ in moves
@@ -272,10 +281,14 @@ class GameSession:
     ) -> dict:
         self._ensure_active()
         player_state = self._get_player_state(player_id)
-        before_board = self._board_snapshot(player_state.board)
-        before_rack = player_state.board.unplaced_letters.copy()
+        before_tiles, before_rack = self._capture_board_edit(player_state.board)
         removed = player_state.board.remove_letters(points)
-        self._remember_board_edit(player_state, before_board, "block removal")
+        self._remember_board_edit(
+            player_state,
+            before_tiles,
+            before_rack,
+            "block removal",
+        )
         return {
             "type": "tiles_removed",
             "removed": [
@@ -300,13 +313,17 @@ class GameSession:
     def remove_tile(self, player_id: UUID | str, x: int, y: int) -> dict:
         self._ensure_active()
         player_state = self._get_player_state(player_id)
-        before_board = self._board_snapshot(player_state.board)
+        before_tiles, before_rack = self._capture_board_edit(player_state.board)
         point = Point(x, y)
         tile = player_state.board.placed_tiles.get(point)
-        before_rack = player_state.board.unplaced_letters.copy()
         if not player_state.board.remove_letter(x, y):
             raise ValueError(f"No tile placed at ({x}, {y}).")
-        self._remember_board_edit(player_state, before_board, "tile removal")
+        self._remember_board_edit(
+            player_state,
+            before_tiles,
+            before_rack,
+            "tile removal",
+        )
         return {
             "type": "tile_removed",
             "point": _point_payload(point),
@@ -322,7 +339,7 @@ class GameSession:
         }
 
     def undo(self, player_id: UUID | str) -> dict:
-        """Restore the player's board and rack from their latest board edit."""
+        """Atomically apply the inverse patch for the latest board edit."""
         self._ensure_active()
         player_state = self._get_player_state(player_id)
         history = self.undo_history.setdefault(player_state.player.id, [])
@@ -330,8 +347,9 @@ class GameSession:
             raise ValueError("There are no board edits to undo.")
 
         before_rack = player_state.board.unplaced_letters.copy()
-        entry = history.pop()
-        self._restore_board_snapshot(player_state.board, entry["board"])
+        entry = history[-1]
+        self._apply_inverse_patch(player_state.board, entry)
+        history.pop()
         board_state = player_state.board.to_state()
         description = str(entry.get("description") or "board edit")
         return {
@@ -379,7 +397,6 @@ class GameSession:
             other_player_state.board.unplaced_letters.update(drawn)
             drawn_by_player[str(other_player_state.player.id)] = _counter_payload(drawn)
 
-        self._clear_all_undo_history()
         return {
             "type": "peeled",
             "drawn_by_player": drawn_by_player,
@@ -482,7 +499,7 @@ class GameSession:
 
     def to_record(self) -> dict:
         return {
-            "version": 3,
+            "version": 4,
             "game_id": str(self.game_id),
             "mode": self.mode,
             "bag": dict(self.bag),
@@ -530,6 +547,7 @@ class GameSession:
         rng: random.Random | None = None,
     ) -> "GameSession":
         rng = rng or random.Random()
+        record_version = int(record.get("version", 1))
         mode = str(record["mode"])
         bag = Counter(record.get("bag") or {})
         legacy_bag_multiplier = (
@@ -577,7 +595,7 @@ class GameSession:
             raw_history = player_record.get("undo_history")
             session.undo_history[player.id] = (
                 deepcopy(raw_history[-MAX_UNDO_HISTORY:])
-                if isinstance(raw_history, list)
+                if record_version >= 4 and isinstance(raw_history, list)
                 else []
             )
 
@@ -641,48 +659,115 @@ class GameSession:
         }
 
     @staticmethod
-    def _board_snapshot(board: Board) -> dict:
-        return {
-            "rack": _counter_payload(board.unplaced_letters),
-            "placed_tiles": [
-                {
-                    "x": point.x,
-                    "y": point.y,
-                    **_tile_payload(tile),
-                }
-                for point, tile in sorted(
-                    board.placed_tiles.items(),
-                    key=lambda item: (item[0].y, item[0].x),
-                )
-            ],
-        }
+    def _capture_board_edit(
+        board: Board,
+    ) -> tuple[dict[Point, Tile], Counter[str]]:
+        return board.placed_tiles.copy(), board.unplaced_letters.copy()
 
     def _remember_board_edit(
         self,
         player_state: PlayerState,
-        before_board: dict,
+        before_tiles: dict[Point, Tile],
+        before_rack: Counter[str],
         description: str,
     ) -> None:
-        if before_board == self._board_snapshot(player_state.board):
+        board = player_state.board
+        changed_points = sorted(
+            (
+                point
+                for point in set(before_tiles) | set(board.placed_tiles)
+                if before_tiles.get(point) != board.placed_tiles.get(point)
+            ),
+            key=lambda point: (point.y, point.x),
+        )
+        cell_changes = [
+            {
+                "point": _point_payload(point),
+                "before": (
+                    _tile_payload(before_tiles[point])
+                    if point in before_tiles
+                    else None
+                ),
+                "after": (
+                    _tile_payload(board.placed_tiles[point])
+                    if point in board.placed_tiles
+                    else None
+                ),
+            }
+            for point in changed_points
+        ]
+        rack_delta = _counter_delta(before_rack, board.unplaced_letters)
+        if not cell_changes and not rack_delta:
             return
 
         history = self.undo_history.setdefault(player_state.player.id, [])
         history.append({
             "description": description,
-            "board": before_board,
+            "cells": cell_changes,
+            "rack_delta": rack_delta,
         })
         del history[:-MAX_UNDO_HISTORY]
 
+    @classmethod
+    def _apply_inverse_patch(cls, board: Board, entry: dict) -> None:
+        try:
+            changes = []
+            seen_points = set()
+            for cell_change in entry.get("cells", []):
+                point_payload = cell_change["point"]
+                point = Point(
+                    int(point_payload["x"]),
+                    int(point_payload["y"]),
+                )
+                if point in seen_points:
+                    raise ValueError
+                seen_points.add(point)
+                before_tile = cls._tile_from_patch(cell_change.get("before"))
+                after_tile = cls._tile_from_patch(cell_change.get("after"))
+                changes.append((point, before_tile, after_tile))
+
+            rack_delta = {
+                str(char): int(count)
+                for char, count in (entry.get("rack_delta") or {}).items()
+                if int(count)
+            }
+        except (AttributeError, KeyError, TypeError, ValueError):
+            raise ValueError("Undo history is invalid.") from None
+
+        if not changes and not rack_delta:
+            raise ValueError("Undo history is invalid.")
+
+        for point, _, expected_tile in changes:
+            if board.placed_tiles.get(point) != expected_tile:
+                raise ValueError(
+                    "The board changed since that edit and cannot be undone."
+                )
+
+        restored_rack = board.unplaced_letters.copy()
+        for char, forward_delta in rack_delta.items():
+            restored_rack[char] -= forward_delta
+            if restored_rack[char] < 0:
+                raise ValueError(
+                    "The rack changed since that edit and cannot be undone."
+                )
+            if restored_rack[char] == 0:
+                del restored_rack[char]
+
+        for point, _, _ in changes:
+            board.placed_tiles.pop(point, None)
+        for point, restored_tile, _ in changes:
+            if restored_tile is not None:
+                board.placed_tiles[point] = restored_tile
+        board.unplaced_letters = restored_rack
+
     @staticmethod
-    def _restore_board_snapshot(board: Board, snapshot: dict) -> None:
-        board.unplaced_letters = Counter(snapshot.get("rack") or {})
-        board.placed_tiles = {
-            Point(int(tile_record["x"]), int(tile_record["y"])): Tile(
-                str(tile_record["char"]),
-                bool(tile_record.get("is_wildcard", False)),
-            )
-            for tile_record in snapshot.get("placed_tiles", [])
-        }
+    def _tile_from_patch(payload: dict | None) -> Tile | None:
+        if payload is None:
+            return None
+        return Tile(
+            str(payload["char"]),
+            bool(payload.get("is_wildcard", False)),
+        )
 
     def _clear_all_undo_history(self) -> None:
         for player_id in self.player_state:
