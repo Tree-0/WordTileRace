@@ -69,6 +69,12 @@ class GameStoreTests(unittest.TestCase):
             restored.get_player_state(player_state.player.id).board.to_state()["placed_tiles"][0]["char"],
             "B",
         )
+        self.assertTrue(restored.private_state(player_state.player.id)["can_undo"])
+        restored.undo(player_state.player.id)
+        self.assertEqual(
+            restored.get_player_state(player_state.player.id).board.placed_tiles,
+            {},
+        )
 
     def test_redis_store_sets_ttl_and_restores_session(self):
         redis_client = FakeRedis()
@@ -90,6 +96,12 @@ class GameStoreTests(unittest.TestCase):
         self.assertEqual(
             restored.get_player_state(player_state.player.id).board.to_state()["placed_tiles"][0]["char"],
             "B",
+        )
+        self.assertTrue(restored.private_state(player_state.player.id)["can_undo"])
+        restored.undo(player_state.player.id)
+        self.assertEqual(
+            restored.get_player_state(player_state.player.id).board.placed_tiles,
+            {},
         )
 
     def test_redis_store_lock_uses_game_lock_key(self):

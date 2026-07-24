@@ -37,6 +37,7 @@ const elements = {
     grid: document.querySelector("#grid"),
     gameId: document.querySelector("#game-id"),
     copyGameLinkButton: document.querySelector("#copy-game-link-button"),
+    undoButton: document.querySelector("#undo-button"),
     overwriteBlockMoves: document.querySelector("#overwrite-block-moves"),
     rack: document.querySelector("#rack"),
     rackCount: document.querySelector("#rack-count"),
@@ -590,6 +591,7 @@ function normalizedState(state) {
         messages: state.messages || [],
         players: state.players || state.public?.players || [],
         is_connected: typeof state.is_connected === "boolean" ? state.is_connected : true,
+        can_undo: Boolean(state.can_undo),
     };
 }
 
@@ -664,6 +666,14 @@ function applyStateDiff(diff) {
         updateActionFlags(state, diff);
         updateChangedWordValidation(state, diff);
         resetBoardInteractions();
+    } else if (diff.type === "board_undone") {
+        if (diff.validated_board) {
+            applyValidatedBoard(state, diff.validated_board);
+        }
+        updateActionFlags(state, diff);
+        resetBoardInteractions();
+        state.message = diff.message || "Undid the last board edit.";
+        state.messages = [state.message];
     } else if (diff.type === "rack_changed" || diff.type === "peeled") {
         applyRackDelta(state, diff.rack_delta);
         if (typeof diff.bag_count === "number") {
@@ -691,6 +701,7 @@ function applyStateDiff(diff) {
         state.bag_count = diff.bag_count;
         state.can_peel = false;
         state.can_dump = false;
+        state.can_undo = false;
         state.validation_stale = false;
         if (diff.validated_board) {
             applyValidatedBoard(state, diff.validated_board);
@@ -808,6 +819,9 @@ function updateActionFlags(state, diff) {
     }
     if (typeof diff.can_peel === "boolean") {
         state.can_peel = diff.can_peel;
+    }
+    if (typeof diff.can_undo === "boolean") {
+        state.can_undo = diff.can_undo;
     }
 }
 
@@ -1039,6 +1053,7 @@ function renderRack() {
     elements.rackCount.textContent = total;
     elements.bagCount.textContent = ui.state.bag_count;
     elements.peelButton.disabled = !ui.state.can_peel;
+    elements.undoButton.disabled = !ui.state.can_undo || ui.state.is_game_over;
 
     for (const [char, count] of entries) {
         const item = document.createElement("div");
@@ -1830,6 +1845,19 @@ async function peel() {
     await emitAction("peel", {});
 }
 
+async function undoLastBoardEdit() {
+    if (
+        !ui.state
+        || !ui.state.can_undo
+        || ui.state.is_game_over
+        || ui.pendingBlockMove
+    ) {
+        return;
+    }
+    resetBoardInteractions();
+    await emitAction("undo", {});
+}
+
 async function dumpTile(char) {
     await emitAction("dump", { char });
 }
@@ -1991,6 +2019,7 @@ elements.joinForm.addEventListener("submit", async (event) => {
 });
 
 elements.peelButton.addEventListener("click", peel);
+elements.undoButton.addEventListener("click", undoLastBoardEdit);
 elements.copyGameLinkButton.addEventListener("click", copyGameLink);
 elements.overwriteBlockMoves?.addEventListener("change", () => {
     savePreferences();
@@ -2040,6 +2069,12 @@ document.addEventListener("keydown", async (event) => {
         } else if (normalizedKey === "v" && ui.moveBuffer) {
             event.preventDefault();
             await pasteSelection();
+        } else if (normalizedKey === "z" && !event.shiftKey) {
+            event.preventDefault();
+            await undoLastBoardEdit();
+        } else if (normalizedKey === "d") {
+            event.preventDefault();
+            await dumpSelectedTile();
         }
         return;
     }
@@ -2057,18 +2092,16 @@ document.addEventListener("keydown", async (event) => {
         return;
     }
 
-    if (event.key === "Backspace" || event.key === "Delete" || event.code === "Backquote") {
+    if (event.key === "Backspace" || event.key === "Delete") {
         event.preventDefault();
         await removeCurrentSelection();
         return;
     }
 
-    // Press space to peel a tile, when possible
     if (event.code === "Space") {
         event.preventDefault();
-        // Press shift + space to dump the tile on the selected cell
         if (event.shiftKey) {
-            await dumpSelectedTile();
+            await removeCurrentSelection();
         }
         else if (ui.state && ui.state.can_peel) {
             await peel();

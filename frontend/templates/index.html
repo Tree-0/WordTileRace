@@ -182,6 +182,14 @@
                 </div>
 
                 <div class="game-status-group">
+                    <button
+                        id="undo-button"
+                        class="secondary-button undo-button"
+                        type="button"
+                        title="Undo last board edit (Ctrl/Cmd+Z)"
+                        aria-keyshortcuts="Control+Z Meta+Z"
+                        disabled
+                    >Undo</button>
                     <div class="status-pill" id="board-status" role="status" aria-live="polite">Loading</div>
                 </div>
             </div>
@@ -273,12 +281,15 @@
                     <div><dt>Shift + drag / arrows</dt><dd>Select a group of tiles, ignoring empty cells</dd></div>
                     <div><dt>Ctrl/Cmd + C or X</dt><dd>Prepare the selected block to move</dd></div>
                     <div><dt>Ctrl/Cmd + V</dt><dd>Move the block to the selected cell</dd></div>
+                    <div><dt>Ctrl/Cmd + Z</dt><dd>Undo the last board edit</dd></div>
+                    <div><dt>Ctrl/Cmd + D</dt><dd>Dump the tile on the selected cell</dd></div>
                     <div><dt>A–Z / drag</dt><dd>Place a rack tile</dd></div>
-                    <div><dt>Backspace / Delete / ` (back tick)</dt><dd>Return the selected tile or block to the rack</dd></div>
+                    <div><dt>Shift + Space</dt><dd>Return the selected tile or block to the rack</dd></div>
+                    <div><dt>Backspace / Delete</dt><dd>Also return the selected tile or block</dd></div>
                     <div><dt>Escape</dt><dd>Cancel a pending move or selection</dd></div>
                     <div><dt>Drag a placed tile or block</dt><dd>Move it or return it to the rack</dd></div>
                     <div><dt>Peel / Space</dt><dd>Draw for every player</dd></div>
-                    <div><dt>Dump / Shift + Space</dt><dd>Exchange a tile</dd></div>
+                    <div><dt>Dump</dt><dd>Exchange a rack tile using its button</dd></div>
                 </dl>
             </section>
         </div>

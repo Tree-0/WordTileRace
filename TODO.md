@@ -27,7 +27,7 @@
 
 - [ ] Clearer dump/peel indicators
 - [ ] Cooldown to prevent people from spamming dump
-
+- [X] Undo button
 - [X] Make sure the win condition happens when one player has no more tiles 
     and the number of tiles in the bag is less than the number of players
 - [X] Bag size multiplier

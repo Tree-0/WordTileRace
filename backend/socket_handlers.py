@@ -327,6 +327,29 @@ def register_socket_handlers(
                 debug,
             )
 
+    @socketio.on("undo")
+    def undo(payload=None):
+        debug = _debug_context("undo", payload)
+        try:
+            def mutate(session, player_id):
+                return session.undo(player_id)
+
+            session, player_id, diff = _mutate_current_session(
+                store,
+                mutate,
+                debug=debug,
+            )
+            _emit_state_diff(session, player_id, diff, debug=debug)
+            if diff["rack_delta"]:
+                _emit_public_player_diff(session, player_id)
+            return _with_debug_timing({"success": True}, debug)
+        except ValueError as error:
+            _emit_action_failure(store, str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
+
     @socketio.on("peel")
     def peel(payload=None):
         debug = _debug_context("peel", payload)

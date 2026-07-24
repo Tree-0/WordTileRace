@@ -35,7 +35,8 @@ scope of the current match (no player stats, streaks, etc.).
 - Click a grid cell to select it, or move cells with arrow keys.
 - Press `A-Z` to place that letter in the selected cell.
   - Alternatively, drag a rack tile onto the grid to place it.
-- Press `Backspace`, `Delete`, or ``Backtick (`)`` to return the selected tile or block to the rack.
+- Press `Shift + Space`, `Backspace`, or `Delete` to return the selected tile
+  or block to the rack.
 - Drag a placed tile to an empty cell to move it.
 - Drag a placed tile back to the rack to remove it.
 - Hold `Shift` while dragging across the board, or use `Shift + Arrow`, to
@@ -46,11 +47,12 @@ scope of the current match (no player stats, streaks, etc.).
   `Ctrl/Cmd + V` to place it.
 - Drag any tile in a selected block to move the whole block.
 - Press `Escape` to cancel a pending block move or collapse a selection.
+- Press `Ctrl/Cmd + Z` or click `Undo` to undo one of the last eight board
+  edits. Peel and Dump clear the undo history.
 - Click `Peel` when it is enabled, or press `Space`, to draw one tile for every
   player.
+- Press `Ctrl/Cmd + D` to dump the tile on the selected board cell.
 - Click `Dump` below a rack tile to return it and draw replacements.
-  - Alternatively, dump the tile in the currently selected cell using
-    `Shift + Space`.
 
 ## Run Locally
 

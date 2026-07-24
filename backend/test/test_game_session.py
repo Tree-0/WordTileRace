@@ -4,7 +4,7 @@ import unittest
 from uuid import uuid4
 
 from backend.board import Board, Point
-from backend.game_session import GameSession
+from backend.game_session import GameSession, MAX_UNDO_HISTORY
 from backend.test.test_board import FakeTrie
 
 
@@ -209,6 +209,86 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(len(remove_result["removed"]), 2)
         self.assertEqual(remove_result["rack_delta"], {"B": 1, "E": 1})
         self.assertEqual(player_state.board.placed_tiles, {})
+
+    def test_undo_restores_overwritten_block_and_rack(self):
+        session = GameSession.new_game("BEX", board_factory=make_board)
+        player_state = session.add_player("TestPlayer")
+        player_id = player_state.player.id
+        for x, char in enumerate("BEX"):
+            session.place_tile(player_id, char, x, 0)
+
+        session.move_tiles(
+            player_id,
+            [Point(0, 0), Point(1, 0)],
+            Point(1, 0),
+            overwrite=True,
+        )
+        self.assertEqual(player_state.board.unplaced_letters, Counter({"X": 1}))
+
+        result = session.undo(player_id)
+
+        self.assertEqual(result["type"], "board_undone")
+        self.assertEqual(result["message"], "Undid block move.")
+        self.assertEqual(result["rack_delta"], {"X": -1})
+        self.assertTrue(result["can_undo"])
+        self.assertEqual(player_state.board.unplaced_letters, Counter())
+        self.assertEqual(
+            {
+                (point.x, point.y): tile.char
+                for point, tile in player_state.board.placed_tiles.items()
+            },
+            {(0, 0): "B", (1, 0): "E", (2, 0): "X"},
+        )
+
+    def test_undo_history_is_bounded_and_round_trips(self):
+        session = GameSession.new_game("B" * 10, board_factory=make_board)
+        player_state = session.add_player("TestPlayer")
+        player_id = player_state.player.id
+        for x in range(10):
+            session.place_tile(player_id, "B", x, 0)
+
+        restored = GameSession.from_record(
+            session.to_record(),
+            board_factory=make_board,
+        )
+        restored_player = restored.get_player_state(player_id)
+
+        self.assertEqual(len(restored.undo_history[player_id]), MAX_UNDO_HISTORY)
+        for _ in range(MAX_UNDO_HISTORY):
+            result = restored.undo(player_id)
+
+        self.assertFalse(result["can_undo"])
+        self.assertEqual(restored_player.board.unplaced_letters, Counter({"B": 8}))
+        self.assertEqual(
+            set(restored_player.board.placed_tiles),
+            {Point(0, 0), Point(1, 0)},
+        )
+        with self.assertRaisesRegex(ValueError, "no board edits"):
+            restored.undo(player_id)
+
+    def test_dump_and_peel_clear_undo_history(self):
+        dump_session = GameSession.new_game("BE", board_factory=make_board)
+        dump_player = dump_session.add_player("Dumper")
+        dump_session.place_tile(dump_player.player.id, "B", 0, 0)
+        dump_session.dump(dump_player.player.id, "E")
+
+        self.assertFalse(
+            dump_session.private_state(dump_player.player.id)["can_undo"]
+        )
+        with self.assertRaisesRegex(ValueError, "no board edits"):
+            dump_session.undo(dump_player.player.id)
+
+        peel_session = GameSession.new_game("BE", board_factory=make_board)
+        peel_player = peel_session.add_player("Peeler")
+        peel_session.place_tile(peel_player.player.id, "B", 0, 0)
+        peel_session.place_tile(peel_player.player.id, "E", 1, 0)
+        peel_session.peel(peel_player.player.id)
+
+        self.assertFalse(
+            peel_session.private_state(peel_player.player.id)["can_undo"]
+        )
+        with self.assertRaisesRegex(ValueError, "no board edits"):
+            peel_session.undo(peel_player.player.id)
 
     def test_peel_draws_one_tile_for_every_player(self):
         session = GameSession.new_game(rng=random.Random(1), board_factory=make_board)

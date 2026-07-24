@@ -421,6 +421,47 @@ class SocketHandlerTests(unittest.TestCase):
             {(1, 0): "E"},
         )
 
+    def test_undo_restores_board_and_rack_through_persisted_session(self):
+        app, store = self.make_app_and_store()
+        client = socketio.test_client(app)
+        ack = self.emit_ack(client, "create_game", {
+            "mode": "custom",
+            "letters": "BE",
+        })
+        self.emit_ack(client, "place_tile", {
+            "x": 0,
+            "y": 0,
+            "char": "B",
+        })
+        client.get_received()
+
+        action_ack = self.emit_ack(client, "undo")
+        received = client.get_received()
+        diff_events = [
+            event["args"][0]
+            for event in received
+            if event["name"] == "state_diff"
+        ]
+        public_events = [
+            event["args"][0]
+            for event in received
+            if event["name"] == "public_state_diff"
+        ]
+        player = store.get(ack["game_id"]).get_player_state(ack["player_id"])
+
+        self.assertTrue(action_ack["success"])
+        self.assertEqual(diff_events[-1]["type"], "board_undone")
+        self.assertEqual(diff_events[-1]["rack_delta"], {"B": 1})
+        self.assertEqual(diff_events[-1]["validated_board"]["placed_tiles"], [])
+        self.assertFalse(diff_events[-1]["can_undo"])
+        self.assertTrue(public_events)
+        self.assertEqual(player.board.placed_tiles, {})
+        self.assertEqual(player.board.unplaced_letters, Counter("BE"))
+
+        rejected_ack = self.emit_ack(client, "undo")
+        self.assertFalse(rejected_ack["success"])
+        self.assertIn("no board edits", rejected_ack["message"])
+
     def test_local_board_diff_only_goes_to_acting_player(self):
         app, _ = self.make_app_and_store()
         first_client = socketio.test_client(app)

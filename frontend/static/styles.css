@@ -506,6 +506,19 @@ input {
     max-width: 100%;
 }
 
+.undo-button {
+    flex: 0 0 auto;
+    min-height: 32px;
+}
+
+.undo-button:disabled,
+.undo-button:disabled:hover {
+    border-color: var(--line);
+    background: #e7ebe7;
+    color: #87908a;
+    cursor: not-allowed;
+}
+
 .help-button {
     display: inline-grid;
     width: 38px;
