@@ -36,8 +36,15 @@ const elements = {
     helpDialog: document.querySelector("#help-dialog"),
     winnerDialog: document.querySelector("#winner-dialog"),
     winnerMessage: document.querySelector("#winner-message"),
+    winnerPlayAgainButton: document.querySelector("#winner-play-again-button"),
     status: document.querySelector("#board-status"),
     boardWrap: document.querySelector(".board-wrap"),
+    roundLobby: document.querySelector("#round-lobby"),
+    roundLobbyKicker: document.querySelector("#round-lobby-kicker"),
+    roundLobbyTitle: document.querySelector("#round-lobby-title"),
+    roundLobbyMessage: document.querySelector("#round-lobby-message"),
+    playAgainButton: document.querySelector("#play-again-button"),
+    startRoundButton: document.querySelector("#start-round-button"),
     grid: document.querySelector("#grid"),
     gameId: document.querySelector("#game-id"),
     copyGameLinkButton: document.querySelector("#copy-game-link-button"),
@@ -627,8 +634,13 @@ function viewportBounds() {
 }
 
 function normalizedState(state) {
+    const roomStatus = state.room_status || (
+        state.is_game_over ? "finished" : "active"
+    );
     return {
         ...state,
+        room_status: roomStatus,
+        round_number: Number(state.round_number) || 0,
         rack: state.rack || {},
         placed_tiles: state.placed_tiles || [],
         formed_words: state.formed_words || [],
@@ -636,6 +648,11 @@ function normalizedState(state) {
         players: state.players || state.public?.players || [],
         is_connected: typeof state.is_connected === "boolean" ? state.is_connected : true,
         can_undo: Boolean(state.can_undo),
+        is_host: Boolean(state.is_host),
+        is_participating: Boolean(state.is_participating),
+        is_ready_for_next_round: Boolean(state.is_ready_for_next_round),
+        can_play_again: Boolean(state.can_play_again),
+        can_start_round: Boolean(state.can_start_round),
     };
 }
 
@@ -645,11 +662,18 @@ function render(state) {
     ui.playerName = ui.state.player_name || ui.playerName;
     renderSession();
     renderStatus();
+    renderRoundControls();
     renderPlayers();
     renderRack();
     renderWords();
     renderMessages();
     renderGrid();
+    if (ui.state.room_status === "active") {
+        ui.dismissedWinner = null;
+        if (elements.winnerDialog.open) {
+            closeDialog(elements.winnerDialog);
+        }
+    }
     renderWinnerAnnouncement();
 }
 
@@ -740,12 +764,17 @@ function applyStateDiff(diff) {
     } else if (diff.type === "game_over") {
         resetBoardInteractions();
         state.is_game_over = true;
+        state.room_status = diff.room_status || "finished";
+        state.round_number = diff.round_number || state.round_number;
         state.winner_id = diff.winner_id;
         state.winner_name = diff.winner_name;
         state.bag_count = diff.bag_count;
         state.can_peel = false;
         state.can_dump = false;
         state.can_undo = false;
+        state.can_play_again = Boolean(diff.can_play_again);
+        state.can_start_round = Boolean(diff.can_start_round);
+        state.is_ready_for_next_round = Boolean(diff.is_ready_for_next_round);
         state.validation_stale = false;
         if (diff.validated_board) {
             applyValidatedBoard(state, diff.validated_board);
@@ -766,6 +795,9 @@ function applyPublicState(publicState) {
     for (const field of [
         "bag_count",
         "is_game_over",
+        "room_status",
+        "round_number",
+        "host_player_id",
         "winner_id",
         "winner_name",
         "mode",
@@ -986,6 +1018,68 @@ function renderSession() {
     }
 }
 
+function canInteractWithBoard() {
+    return (
+        ui.state?.room_status === "active"
+        && ui.state?.is_participating
+    );
+}
+
+function renderRoundControls() {
+    const state = ui.state;
+    const canInteract = canInteractWithBoard();
+    elements.roundLobby.hidden = canInteract;
+    elements.boardWrap.classList.toggle("round-inactive", !canInteract);
+    elements.boardWrap.setAttribute("aria-disabled", String(!canInteract));
+
+    elements.startRoundButton.hidden = !state.can_start_round;
+    elements.startRoundButton.disabled = !state.can_start_round;
+    elements.startRoundButton.textContent = (
+        state.room_status === "finished"
+            ? "Start Next Round"
+            : "Start Round"
+    );
+    elements.playAgainButton.hidden = !state.can_play_again;
+    elements.playAgainButton.disabled = !state.can_play_again;
+
+    elements.winnerPlayAgainButton.disabled = (
+        state.is_ready_for_next_round
+        || !state.can_play_again
+    );
+    elements.winnerPlayAgainButton.textContent = (
+        state.is_ready_for_next_round
+            ? "Ready for next round"
+            : "Play Again"
+    );
+
+    if (state.room_status === "waiting") {
+        elements.roundLobbyKicker.textContent = "Game room";
+        elements.roundLobbyTitle.textContent = "Waiting for players";
+        elements.roundLobbyMessage.textContent = state.is_host
+            ? "Share the game link, then start when everyone has joined."
+            : "You are in. Waiting for the host to start the round.";
+    } else if (state.room_status === "finished") {
+        elements.roundLobbyKicker.textContent = `Round ${state.round_number} complete`;
+        elements.roundLobbyTitle.textContent = state.is_ready_for_next_round
+            ? `Ready for round ${state.round_number + 1}`
+            : `${winnerDisplayName()} wins`;
+        elements.roundLobbyMessage.textContent = state.is_ready_for_next_round
+            ? (
+                state.is_host
+                    ? "Start when the next-round players are ready."
+                    : "Waiting for the host to start the next round."
+            )
+            : "Choose Play Again to join the next round.";
+    } else {
+        elements.roundLobbyKicker.textContent = `Round ${state.round_number}`;
+        elements.roundLobbyTitle.textContent = "Round in progress";
+        elements.roundLobbyMessage.textContent = (
+            "You are not participating in this round. "
+            + "You can join the next one after it ends."
+        );
+    }
+}
+
 function winnerDisplayName(state = ui.state) {
     if (!state) {
         return "A player";
@@ -1024,17 +1118,33 @@ function renderPlayers() {
         name.textContent = player.player_name || "Player";
         item.append(name);
 
+        const roles = [];
+        if (player.is_host) {
+            roles.push("Host");
+        }
         if (isCurrentPlayer) {
-            const you = document.createElement("span");
-            you.className = "player-you";
-            you.textContent = "You";
-            item.append(you);
+            roles.push("You");
+        }
+        if (roles.length > 0) {
+            const role = document.createElement("span");
+            role.className = player.is_host ? "player-role" : "player-you";
+            role.textContent = roles.join(" · ");
+            item.append(role);
         }
 
         const progress = document.createElement("span");
         progress.className = "player-progress";
-        if (isWinner) {
-            progress.textContent = "Winner";
+        if (ui.state.room_status === "waiting") {
+            progress.textContent = `Playing in round ${ui.state.round_number + 1}`;
+        } else if (
+            ui.state.room_status === "finished"
+            && player.is_ready_for_next_round
+        ) {
+            progress.textContent = `Ready for round ${ui.state.round_number + 1}`;
+        } else if (isWinner) {
+            progress.textContent = "Round winner";
+        } else if (!player.is_participating) {
+            progress.textContent = "Waiting for the next round";
         } else {
             const count = Number(player.rack_count) || 0;
             progress.textContent = `${count} tile${count === 1 ? "" : "s"} left`;
@@ -1050,7 +1160,7 @@ function renderWinnerAnnouncement() {
     }
 
     const winnerName = winnerDisplayName();
-    const winnerKey = ui.state.winner_id || winnerName;
+    const winnerKey = `${ui.state.round_number}:${ui.state.winner_id || winnerName}`;
     if (ui.dismissedWinner === winnerKey || elements.winnerDialog.open) {
         return;
     }
@@ -1078,15 +1188,34 @@ function renderMessage(message) {
 }
 
 function renderStatus() {
-    const isStale = Boolean(ui.state.validation_stale) && !ui.state.is_game_over;
+    const isActivePlayer = canInteractWithBoard();
+    const isStale = (
+        isActivePlayer
+        && Boolean(ui.state.validation_stale)
+        && !ui.state.is_game_over
+    );
     const hasKnownWords = isStale && ui.state.formed_words.length > 0;
     elements.status.classList.toggle("stale", isStale);
-    elements.status.classList.toggle("valid", ui.state.is_valid && !ui.state.is_game_over && !isStale);
-    elements.status.classList.toggle("invalid", !ui.state.is_valid && !isStale);
+    elements.status.classList.toggle(
+        "valid",
+        isActivePlayer && ui.state.is_valid && !ui.state.is_game_over && !isStale,
+    );
+    elements.status.classList.toggle(
+        "invalid",
+        isActivePlayer && !ui.state.is_valid && !isStale,
+    );
     elements.status.classList.toggle("complete", ui.state.is_game_over);
-    elements.status.textContent = ui.state.is_game_over
-        ? `${winnerDisplayName()} wins`
-        : hasKnownWords ? "Partial" : isStale ? "Unvalidated" : ui.state.is_valid ? "Valid" : "Invalid";
+    if (ui.state.room_status === "waiting") {
+        elements.status.textContent = "Waiting";
+    } else if (ui.state.is_game_over) {
+        elements.status.textContent = `${winnerDisplayName()} wins`;
+    } else if (!ui.state.is_participating) {
+        elements.status.textContent = "In progress";
+    } else {
+        elements.status.textContent = hasKnownWords
+            ? "Partial"
+            : isStale ? "Unvalidated" : ui.state.is_valid ? "Valid" : "Invalid";
+    }
 }
 
 function renderRack() {
@@ -1889,6 +2018,33 @@ async function peel() {
     await emitAction("peel", {});
 }
 
+async function startRound() {
+    if (!ui.state?.can_start_round) {
+        return;
+    }
+    elements.startRoundButton.disabled = true;
+    const response = await emitAction("start_round", {});
+    if (!response.success) {
+        elements.startRoundButton.disabled = false;
+        renderMessage(response.message || "Could not start the round.");
+    }
+}
+
+async function playAgain() {
+    if (!ui.state?.can_play_again) {
+        return;
+    }
+    elements.playAgainButton.disabled = true;
+    elements.winnerPlayAgainButton.disabled = true;
+    const response = await emitAction("play_again", {});
+    if (!response.success) {
+        renderMessage(response.message || "Could not join the next round.");
+        renderRoundControls();
+        return;
+    }
+    closeDialog(elements.winnerDialog);
+}
+
 async function undoLastBoardEdit() {
     if (
         !ui.state
@@ -1955,7 +2111,9 @@ for (const dialog of document.querySelectorAll("dialog")) {
 
 elements.winnerDialog.addEventListener("close", () => {
     if (ui.state?.is_game_over) {
-        ui.dismissedWinner = ui.state.winner_id || winnerDisplayName();
+        ui.dismissedWinner = (
+            `${ui.state.round_number}:${ui.state.winner_id || winnerDisplayName()}`
+        );
     }
 });
 
@@ -2074,6 +2232,9 @@ elements.joinForm.addEventListener("submit", async (event) => {
 
 elements.peelButton.addEventListener("click", peel);
 elements.undoButton.addEventListener("click", undoLastBoardEdit);
+elements.startRoundButton.addEventListener("click", startRound);
+elements.playAgainButton.addEventListener("click", playAgain);
+elements.winnerPlayAgainButton.addEventListener("click", playAgain);
 elements.copyGameLinkButton.addEventListener("click", copyGameLink);
 elements.overwriteBlockMoves?.addEventListener("change", () => {
     savePreferences();
@@ -2106,6 +2267,9 @@ document.addEventListener("keydown", async (event) => {
 
     const activeTag = document.activeElement && document.activeElement.tagName;
     if (activeTag === "INPUT" || activeTag === "TEXTAREA") {
+        return;
+    }
+    if (!canInteractWithBoard() && event.key !== "Escape") {
         return;
     }
     if (ui.pendingBlockMove) {

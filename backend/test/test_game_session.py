@@ -19,6 +19,107 @@ def make_board(rack: Counter[str], valid_words: set[str] | None = None) -> Board
 
 
 class GameSessionTests(unittest.TestCase):
+    def test_room_waits_for_host_and_deals_everyone_when_started(self):
+        session = GameSession.new_game(
+            rng=random.Random(2),
+            board_factory=make_board,
+        )
+        host = session.add_player("Host")
+        friend = session.add_player("Friend")
+
+        host_state = session.private_state(host.player.id)
+        friend_state = session.private_state(friend.player.id)
+        self.assertEqual(session.room_status, "waiting")
+        self.assertEqual(session.round_number, 0)
+        self.assertEqual(host.rack_count, 0)
+        self.assertTrue(host_state["is_host"])
+        self.assertTrue(host_state["can_start_round"])
+        self.assertFalse(friend_state["is_host"])
+        with self.assertRaisesRegex(ValueError, "Only the host"):
+            session.start_round(friend.player.id)
+        with self.assertRaisesRegex(ValueError, "not started"):
+            session.place_tile(host.player.id, "A", 0, 0)
+
+        result = session.start_round(host.player.id)
+
+        self.assertEqual(result["type"], "round_started")
+        self.assertEqual(session.room_status, "active")
+        self.assertEqual(session.round_number, 1)
+        self.assertEqual(host.rack_count, 21)
+        self.assertEqual(friend.rack_count, 21)
+        self.assertEqual(session.bag_count, 102)
+        self.assertEqual(
+            session.round_player_ids,
+            {host.player.id, friend.player.id},
+        )
+
+    def test_rematch_uses_only_ready_players_and_resets_round_state(self):
+        session = GameSession.new_game(
+            "BE",
+            board_factory=make_board,
+            bag_multiplier=2,
+        )
+        host = session.add_player("Host")
+        friend = session.add_player("Friend")
+        session.start_round(host.player.id)
+        session.bag = Counter()
+        session.place_tile(host.player.id, "B", 0, 0)
+        session.place_tile(host.player.id, "E", 1, 0)
+        session.peel(host.player.id)
+
+        self.assertEqual(session.room_status, "finished")
+        self.assertEqual(session.next_round_player_ids, set())
+        session.play_again(friend.player.id)
+        ready_state = session.private_state(friend.player.id)
+        self.assertTrue(ready_state["is_ready_for_next_round"])
+        self.assertTrue(session.private_state(host.player.id)["can_start_round"])
+        restored = GameSession.from_record(
+            session.to_record(),
+            board_factory=make_board,
+        )
+        self.assertEqual(restored.room_status, "finished")
+        self.assertEqual(restored.host_player_id, host.player.id)
+        self.assertEqual(
+            restored.next_round_player_ids,
+            {friend.player.id},
+        )
+        self.assertEqual(
+            restored.player_order,
+            [host.player.id, friend.player.id],
+        )
+
+        session.start_round(host.player.id)
+
+        self.assertEqual(session.room_status, "active")
+        self.assertEqual(session.round_number, 2)
+        self.assertIsNone(session.winner_id)
+        self.assertEqual(session.round_player_ids, {friend.player.id})
+        self.assertEqual(host.rack_count, 0)
+        self.assertEqual(host.board.placed_tiles, {})
+        self.assertEqual(friend.board.unplaced_letters, Counter("BE"))
+        self.assertEqual(session.bag_count, 288)
+        self.assertFalse(
+            session.private_state(host.player.id)["is_participating"]
+        )
+        with self.assertRaisesRegex(ValueError, "not participating"):
+            session.place_tile(host.player.id, "B", 0, 0)
+
+    def test_transfer_host_uses_room_join_order(self):
+        session = GameSession.new_game("BE", board_factory=make_board)
+        host = session.add_player("Host")
+        second = session.add_player("Second")
+        third = session.add_player("Third")
+
+        transferred = session.transfer_host(
+            connected_player_ids={second.player.id, third.player.id},
+        )
+
+        self.assertEqual(transferred, second.player.id)
+        self.assertEqual(session.host_player_id, second.player.id)
+        self.assertTrue(
+            session.private_state(second.player.id)["can_start_round"]
+        )
+
     def test_random_game_adds_player_from_shared_bag(self):
         session = GameSession.new_game(
             rng=random.Random(2),
@@ -26,6 +127,9 @@ class GameSessionTests(unittest.TestCase):
         )
 
         player_state = session.add_player("TestPlayer")
+        self.assertEqual(player_state.rack_count, 0)
+        self.assertEqual(session.bag_count, 144)
+        session.start_round(player_state.player.id)
 
         self.assertEqual(player_state.rack_count, 21)
         self.assertEqual(session.bag_count, 123)
@@ -76,6 +180,7 @@ class GameSessionTests(unittest.TestCase):
 
         player_state = session.add_player("Natha")
         second_player = session.add_player("Friend")
+        session.start_round(player_state.player.id)
 
         self.assertEqual(player_state.board.unplaced_letters, Counter("BEAN"))
         self.assertEqual(second_player.board.unplaced_letters, Counter("BEAN"))
@@ -100,6 +205,7 @@ class GameSessionTests(unittest.TestCase):
 
                 first_player = session.add_player("One")
                 second_player = session.add_player("Two")
+                session.start_round(first_player.player.id)
 
                 self.assertIsNone(session.custom_rack)
                 self.assertEqual(session.mode, "custom")
@@ -114,7 +220,8 @@ class GameSessionTests(unittest.TestCase):
             board_factory=make_board,
             bag_multiplier=1.5,
         )
-        session.add_player("Natha")
+        player_state = session.add_player("Natha")
+        session.start_round(player_state.player.id)
 
         restored = GameSession.from_record(
             session.to_record(),
@@ -141,6 +248,33 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(restored.bag_multiplier, 0.0)
         self.assertEqual(restored.bag_count, 0)
 
+    def test_version_four_record_restores_as_an_active_first_round(self):
+        session = GameSession.new_game("BE", board_factory=make_board)
+        host = session.add_player("Host")
+        friend = session.add_player("Friend")
+        session.start_round(host.player.id)
+        record = session.to_record()
+        record["version"] = 4
+        for field in (
+            "room_status",
+            "round_number",
+            "host_player_id",
+            "player_order",
+            "round_player_ids",
+            "next_round_player_ids",
+        ):
+            del record[field]
+
+        restored = GameSession.from_record(record, board_factory=make_board)
+
+        self.assertEqual(restored.room_status, "active")
+        self.assertEqual(restored.round_number, 1)
+        self.assertEqual(
+            restored.round_player_ids,
+            {host.player.id, friend.player.id},
+        )
+        self.assertIn(restored.host_player_id, restored.round_player_ids)
+
     def test_none_bag_requires_and_accepts_custom_rack(self):
         with self.assertRaisesRegex(ValueError, "when bag size is NONE"):
             GameSession.new_game("", board_factory=make_board, bag_multiplier=0)
@@ -152,6 +286,7 @@ class GameSessionTests(unittest.TestCase):
         )
         player_state = session.add_player("Natha")
         second_player = session.add_player("Friend")
+        session.start_round(player_state.player.id)
 
         self.assertEqual(player_state.board.unplaced_letters, Counter("BEAN"))
         self.assertEqual(second_player.board.unplaced_letters, Counter("BEAN"))
@@ -163,13 +298,15 @@ class GameSessionTests(unittest.TestCase):
             board_factory=make_board,
             bag_multiplier=1.59,
         )
-        random_session.add_player("Random")
+        random_player = random_session.add_player("Random")
+        random_session.start_round(random_player.player.id)
         custom_session = GameSession.new_game(
             "BEAN",
             board_factory=make_board,
             bag_multiplier=2,
         )
-        custom_session.add_player("Custom")
+        custom_player = custom_session.add_player("Custom")
+        custom_session.start_round(custom_player.player.id)
 
         self.assertEqual(random_session.bag_multiplier, 1.5)
         self.assertEqual(random_session.bag_count, 195)
@@ -203,6 +340,7 @@ class GameSessionTests(unittest.TestCase):
     def test_board_actions_flow_through_session(self):
         session = GameSession.new_game("BE", board_factory=make_board)
         player_state = session.add_player("TestPlayer")
+        session.start_round(player_state.player.id)
 
         place_result = session.place_tile(player_state.player.id, "B", 0, 0)
         move_result = session.move_tile(player_state.player.id, Point(0, 0), Point(1, 0))
@@ -223,6 +361,7 @@ class GameSessionTests(unittest.TestCase):
         session = GameSession.new_game("BEX", board_factory=make_board)
         player_state = session.add_player("TestPlayer")
         player_id = player_state.player.id
+        session.start_round(player_id)
         session.place_tile(player_id, "B", 0, 0)
         session.place_tile(player_id, "E", 1, 0)
         session.place_tile(player_id, "X", 2, 0)
@@ -254,6 +393,7 @@ class GameSessionTests(unittest.TestCase):
         session = GameSession.new_game("BEX", board_factory=make_board)
         player_state = session.add_player("TestPlayer")
         player_id = player_state.player.id
+        session.start_round(player_id)
         for x, char in enumerate("BEX"):
             session.place_tile(player_id, char, x, 0)
 
@@ -284,6 +424,7 @@ class GameSessionTests(unittest.TestCase):
         session = GameSession.new_game("B" * 10, board_factory=make_board)
         player_state = session.add_player("TestPlayer")
         player_id = player_state.player.id
+        session.start_round(player_id)
         for x in range(10):
             session.place_tile(player_id, "B", x, 0)
 
@@ -315,6 +456,7 @@ class GameSessionTests(unittest.TestCase):
     def test_dump_clears_undo_history(self):
         dump_session = GameSession.new_game("BE", board_factory=make_board)
         dump_player = dump_session.add_player("Dumper")
+        dump_session.start_round(dump_player.player.id)
         dump_session.place_tile(dump_player.player.id, "B", 0, 0)
         dump_session.dump(dump_player.player.id, "E")
 
@@ -328,6 +470,7 @@ class GameSessionTests(unittest.TestCase):
         peel_session = GameSession.new_game("BE", board_factory=make_board)
         peel_player = peel_session.add_player("Peeler")
         player_id = peel_player.player.id
+        peel_session.start_round(player_id)
         peel_session.place_tile(player_id, "B", 0, 0)
         peel_session.place_tile(player_id, "E", 1, 0)
 
@@ -361,6 +504,7 @@ class GameSessionTests(unittest.TestCase):
         session = GameSession.new_game("BE", board_factory=make_board)
         player_state = session.add_player("TestPlayer")
         player_id = player_state.player.id
+        session.start_round(player_id)
         session.place_tile(player_id, "B", 0, 0)
         player_state.board.placed_tiles[Point(0, 0)] = Tile("E")
         before_tiles = player_state.board.placed_tiles.copy()
@@ -377,6 +521,7 @@ class GameSessionTests(unittest.TestCase):
         session = GameSession.new_game(rng=random.Random(1), board_factory=make_board)
         first = session.add_player("One")
         second = session.add_player("Two")
+        session.start_round(first.player.id)
         first.board.unplaced_letters = Counter({"B": 1, "E": 1})
         first.board.place_tile("B", 0, 0)
         first.board.place_tile("E", 1, 0)
@@ -404,6 +549,7 @@ class GameSessionTests(unittest.TestCase):
     def test_dump_returns_one_tile_and_draws_replacements(self):
         session = GameSession.new_game(rng=random.Random(1), board_factory=make_board)
         player_state = session.add_player("TestPlayer")
+        session.start_round(player_state.player.id)
         player_state.board.unplaced_letters = Counter({"B": 1})
         session.bag = Counter({"A": 1, "C": 1, "D": 1})
 
@@ -417,6 +563,7 @@ class GameSessionTests(unittest.TestCase):
     def test_winner_detected_when_player_peels_with_empty_bag(self):
         session = GameSession.new_game("BE", board_factory=make_board)
         player_state = session.add_player("Natha")
+        session.start_round(player_state.player.id)
         session.bag = Counter()
 
         session.place_tile(player_state.player.id, "B", 0, 0)
@@ -433,7 +580,10 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(session.public_state()["winner_name"], "Natha")
         self.assertEqual(
             private_state["messages"],
-            ["Natha wins! All tiles are placed in valid words."],
+            [
+                "Natha wins! All tiles are placed in valid words. "
+                "Choose Play Again to join the next round."
+            ],
         )
 
     def test_winner_detected_when_bag_has_fewer_tiles_than_players(self):
@@ -443,6 +593,7 @@ class GameSessionTests(unittest.TestCase):
         )
         player_state = session.add_player("Natha")
         session.add_player("Opponent")
+        session.start_round(player_state.player.id)
         player_state.board.unplaced_letters = Counter({"B": 1, "E": 1})
         player_state.board.place_tile("B", 0, 0)
         player_state.board.place_tile("E", 1, 0)
@@ -461,6 +612,7 @@ class GameSessionTests(unittest.TestCase):
     def test_record_round_trip_preserves_game_state(self):
         session = GameSession.new_game("BEAN", board_factory=make_board)
         player_state = session.add_player("Natha")
+        session.start_round(player_state.player.id)
         session.place_tile(player_state.player.id, "B", 0, 0)
         session.place_tile(player_state.player.id, "E", 1, 0)
         session.bag = Counter({"Z": 2})

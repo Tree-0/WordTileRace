@@ -214,6 +214,24 @@
                 </div>
             </div>
 
+            <section id="round-lobby" class="round-lobby" aria-live="polite" hidden>
+                <div>
+                    <p id="round-lobby-kicker" class="round-lobby-kicker">Game room</p>
+                    <h2 id="round-lobby-title">Waiting for players</h2>
+                    <p id="round-lobby-message">
+                        Share the game link, then start when everyone has joined.
+                    </p>
+                </div>
+                <div class="round-lobby-actions">
+                    <button id="play-again-button" class="secondary-button" type="button" hidden>
+                        Play Again
+                    </button>
+                    <button id="start-round-button" type="button" hidden>
+                        Start Round
+                    </button>
+                </div>
+            </section>
+
             <div class="board-wrap">
                 <div id="grid" class="grid" aria-label="Tile grid"></div>
             </div>
@@ -291,6 +309,10 @@
                     to three replacements.
                 </p>
                 <p>
+                    The room host starts each round. After a winner is declared, choose Play Again
+                    to join the next round without leaving the room.
+                </p>
+                <p>
                     When the bag is empty, the first player to place every tile in valid words wins.
                 </p>
             </section>
@@ -329,7 +351,16 @@
         <div class="winner-mark" aria-hidden="true">W</div>
         <p id="winner-message" class="winner-message"></p>
         <p id="winner-detail" class="winner-detail">All of their tiles are placed in valid words.</p>
-        <button class="wide-button" type="button" data-close-dialog>Back to the board</button>
+        <div class="winner-actions">
+            <button id="winner-play-again-button" class="wide-button" type="button">
+                Play Again
+            </button>
+            <a
+                id="winner-leave-button"
+                class="wide-button secondary-button"
+                href="{{ url_for('index') }}"
+            >Leave Game</a>
+        </div>
     </dialog>
 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>

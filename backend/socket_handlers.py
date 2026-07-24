@@ -23,9 +23,11 @@ except ModuleNotFoundError:  # pragma: no cover - exercised when dependency is a
 
 
 BoardFactory = Callable[[Any], Board]
+HOST_DISCONNECT_GRACE_SECONDS = 15
 
 socketio = SocketIO() if SocketIO is not None else None
 connections: dict[str, tuple[str, UUID]] = {}
+disconnected_at: dict[tuple[str, UUID], float] = {}
 active_game_store: GameStore | None = None
 
 
@@ -114,7 +116,11 @@ def register_socket_handlers(
 
             _bind_connection(game_id, player_state.player.id)
             _emit_joined(session, player_state.player.id, debug=debug)
-            _broadcast_session(session, message="Started a new game.", debug=debug)
+            _broadcast_session(
+                session,
+                message="Room created. Waiting for the host to start.",
+                debug=debug,
+            )
             return _with_debug_timing(_ack(session, player_state.player.id), debug)
         except ValueError as error:
             _emit_error(str(error), debug=debug)
@@ -163,6 +169,7 @@ def register_socket_handlers(
             _bind_connection(game_id, player_state.player.id)
             _emit_joined(session, player_state.player.id, debug=debug)
             _broadcast_session(session, message="Joined the game.", debug=debug)
+            _schedule_absent_host_transfer(store, session)
             return _with_debug_timing(_ack(session, player_state.player.id), debug)
         except ValueError as error:
             _emit_error(str(error), debug=debug)
@@ -180,6 +187,63 @@ def register_socket_handlers(
             return _with_debug_timing({"success": True}, debug)
         except ValueError as error:
             _emit_error(str(error), debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
+
+    @socketio.on("start_round")
+    def start_round(payload=None):
+        debug = _debug_context("start_round", payload)
+        try:
+            def mutate(session, player_id):
+                return session.start_round(player_id)
+
+            session, _, diff = _mutate_current_session(
+                store,
+                mutate,
+                debug=debug,
+            )
+            _broadcast_session(
+                session,
+                message=f"Round {session.round_number} started.",
+                debug=debug,
+            )
+            return _with_debug_timing(
+                {"success": True, **diff},
+                debug,
+            )
+        except ValueError as error:
+            _emit_action_failure(store, str(error), refresh=True, debug=debug)
+            return _with_debug_timing(
+                {"success": False, "message": str(error)},
+                debug,
+            )
+
+    @socketio.on("play_again")
+    def play_again(payload=None):
+        debug = _debug_context("play_again", payload)
+        try:
+            def mutate(session, player_id):
+                return session.play_again(player_id)
+
+            session, player_id, diff = _mutate_current_session(
+                store,
+                mutate,
+                debug=debug,
+            )
+            player_name = session.get_player_state(player_id).player.player_name
+            _broadcast_session(
+                session,
+                message=f"{player_name} is ready for the next round.",
+                debug=debug,
+            )
+            return _with_debug_timing(
+                {"success": True, **diff},
+                debug,
+            )
+        except ValueError as error:
+            _emit_action_failure(store, str(error), refresh=True, debug=debug)
             return _with_debug_timing(
                 {"success": False, "message": str(error)},
                 debug,
@@ -370,6 +434,8 @@ def register_socket_handlers(
                 debug=debug,
             )
             _emit_peel_diffs(session, player_id, diff, debug=debug)
+            if diff["type"] == "game_over":
+                _schedule_absent_host_transfer(store, session)
             return _with_debug_timing({"success": True}, debug)
         except ValueError as error:
             _emit_action_failure(store, str(error), refresh=True, debug=debug)
@@ -405,7 +471,25 @@ def register_socket_handlers(
 
     @socketio.on("disconnect")
     def disconnect(reason=None):
-        _leave_existing_rooms()
+        existing = _leave_existing_rooms()
+        if existing is None:
+            return
+
+        game_id, player_id = existing
+        if _has_player_connection(game_id, player_id):
+            return
+
+        disconnected_key = (game_id, player_id)
+        disconnected_timestamp = time.time()
+        disconnected_at[disconnected_key] = disconnected_timestamp
+        socketio.start_background_task(
+            _transfer_host_after_grace,
+            store,
+            game_id,
+            player_id,
+            disconnected_timestamp,
+            HOST_DISCONNECT_GRACE_SECONDS,
+        )
 
 
 def _payload(payload) -> dict:
@@ -466,18 +550,101 @@ def _debug_step(debug: dict | None, name: str, started_at: float) -> None:
 
 def _bind_connection(game_id: str, player_id: UUID) -> None:
     connections[request.sid] = (game_id, player_id)
+    disconnected_at.pop((game_id, player_id), None)
     join_room(_game_room(game_id))
     join_room(_player_room(game_id, player_id))
 
 
-def _leave_existing_rooms() -> None:
+def _leave_existing_rooms() -> tuple[str, UUID] | None:
     existing = connections.pop(request.sid, None)
     if existing is None:
-        return
+        return None
 
     game_id, player_id = existing
     leave_room(_game_room(game_id))
     leave_room(_player_room(game_id, player_id))
+    return existing
+
+
+def _has_player_connection(game_id: str, player_id: UUID) -> bool:
+    return any(
+        connected_game_id == game_id and connected_player_id == player_id
+        for connected_game_id, connected_player_id in connections.values()
+    )
+
+
+def _connected_player_ids(game_id: str) -> set[UUID]:
+    return {
+        player_id
+        for connected_game_id, player_id in connections.values()
+        if connected_game_id == game_id
+    }
+
+
+def _schedule_absent_host_transfer(
+    store: GameStore,
+    session: GameSession,
+) -> None:
+    host_player_id = session.host_player_id
+    if host_player_id is None or _has_player_connection(
+        str(session.game_id),
+        host_player_id,
+    ):
+        return
+
+    disconnected_key = (str(session.game_id), host_player_id)
+    disconnected_timestamp = disconnected_at.get(disconnected_key)
+    if disconnected_timestamp is None:
+        disconnected_timestamp = time.time()
+        disconnected_at[disconnected_key] = disconnected_timestamp
+    elapsed = max(0.0, time.time() - disconnected_timestamp)
+    delay = max(0.0, HOST_DISCONNECT_GRACE_SECONDS - elapsed)
+    socketio.start_background_task(
+        _transfer_host_after_grace,
+        store,
+        str(session.game_id),
+        host_player_id,
+        disconnected_timestamp,
+        delay,
+    )
+
+
+def _transfer_host_after_grace(
+    store: GameStore,
+    game_id: str,
+    disconnected_host_id: UUID,
+    disconnected_timestamp: float,
+    delay: float,
+) -> None:
+    socketio.sleep(delay)
+    disconnected_key = (game_id, disconnected_host_id)
+    if (
+        disconnected_at.get(disconnected_key) != disconnected_timestamp
+        or _has_player_connection(game_id, disconnected_host_id)
+    ):
+        return
+
+    with store.lock(game_id):
+        session = store.get(game_id)
+        if (
+            session is None
+            or session.is_round_active
+            or session.host_player_id != disconnected_host_id
+        ):
+            return
+        new_host_id = session.transfer_host(
+            connected_player_ids=_connected_player_ids(game_id),
+        )
+        if new_host_id is None:
+            return
+        store.save(session)
+
+    disconnected_at.pop(disconnected_key, None)
+    new_host_name = session.get_player_state(new_host_id).player.player_name
+    _broadcast_session(
+        session,
+        message=f"{new_host_name} is now the host.",
+    )
 
 
 def _current_session(store: GameStore) -> tuple[GameSession, UUID]:
@@ -646,6 +813,11 @@ def _emit_peel_diffs(
                 "type": "game_over",
                 "bag_count": diff["bag_count"],
                 "is_game_over": True,
+                "room_status": session.room_status,
+                "round_number": session.round_number,
+                "can_play_again": True,
+                "can_start_round": False,
+                "is_ready_for_next_round": False,
                 "winner_id": diff["winner_id"],
                 "winner_name": diff["winner_name"],
                 "message": f"{diff['winner_name']} wins!",
@@ -663,6 +835,8 @@ def _emit_peel_diffs(
                 "type": "game_over",
                 "bag_count": session.bag_count,
                 "is_game_over": True,
+                "room_status": session.room_status,
+                "round_number": session.round_number,
                 "winner_id": diff["winner_id"],
                 "winner_name": diff["winner_name"],
             },
@@ -714,6 +888,13 @@ def _emit_public_session_diff(session: GameSession) -> None:
         {
             "type": "session_changed",
             "bag_count": session.bag_count,
+            "room_status": session.room_status,
+            "round_number": session.round_number,
+            "host_player_id": (
+                str(session.host_player_id)
+                if session.host_player_id
+                else None
+            ),
             "players": [
                 session.public_player_state(player_state.player.id, validate=False)
                 for player_state in session.player_state.values()

@@ -29,6 +29,10 @@ MAX_UNDO_HISTORY = 8
 MIN_CUSTOM_GAME_ID_LENGTH = 3
 MAX_CUSTOM_GAME_ID_LENGTH = 24
 CUSTOM_GAME_ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+ROOM_WAITING = "waiting"
+ROOM_ACTIVE = "active"
+ROOM_FINISHED = "finished"
+ROOM_STATUSES = {ROOM_WAITING, ROOM_ACTIVE, ROOM_FINISHED}
 
 
 def normalize_custom_game_id(game_id: object) -> str | None:
@@ -94,6 +98,12 @@ class GameSession:
     winner_id: UUID | None = None
     bag_multiplier: float = DEFAULT_BAG_MULTIPLIER
     undo_history: dict[UUID, list[dict]] = field(default_factory=dict, repr=False)
+    room_status: str = ROOM_WAITING
+    host_player_id: UUID | None = None
+    round_number: int = 0
+    player_order: list[UUID] = field(default_factory=list)
+    round_player_ids: set[UUID] = field(default_factory=set, repr=False)
+    next_round_player_ids: set[UUID] = field(default_factory=set, repr=False)
 
     @classmethod
     def new_game(
@@ -137,7 +147,11 @@ class GameSession:
 
     @property
     def is_game_over(self) -> bool:
-        return self.winner_id is not None
+        return self.room_status == ROOM_FINISHED
+
+    @property
+    def is_round_active(self) -> bool:
+        return self.room_status == ROOM_ACTIVE
 
     @property
     def winner(self) -> PlayerState | None:
@@ -151,20 +165,107 @@ class GameSession:
         return winner.player.player_name if winner is not None else None
 
     def add_player(self, player_name: str | None = None) -> PlayerState:
-        if self.custom_rack is not None:
-            tiles = self.custom_rack.copy()
-        else:
-            tiles = draw_tiles(self.bag, DEFAULT_RANDOM_DRAW_COUNT, self.rng)
+        if self.is_round_active:
+            raise ValueError(
+                "A round is already in progress. New players can join after it ends."
+            )
 
         player_state = PlayerState.new_player_state(
             Player(self._resolved_player_name(player_name)),
-            tiles,
+            Counter(),
             self.board_factory,
             self.mode,
         )
         self.player_state[player_state.player.id] = player_state
         self.undo_history[player_state.player.id] = []
+        self.player_order.append(player_state.player.id)
+        self.next_round_player_ids.add(player_state.player.id)
+        if self.host_player_id is None:
+            self.host_player_id = player_state.player.id
         return player_state
+
+    def start_round(self, player_id: UUID | str) -> dict:
+        player_id = self._normalize_player_id(player_id)
+        self._get_player_state(player_id)
+        if player_id != self.host_player_id:
+            raise ValueError("Only the host can start a round.")
+        if self.is_round_active:
+            raise ValueError("A round is already in progress.")
+        if not self.next_round_player_ids:
+            raise ValueError("At least one player must join the next round.")
+
+        participant_ids = [
+            candidate_id
+            for candidate_id in self.player_order
+            if candidate_id in self.next_round_player_ids
+            and candidate_id in self.player_state
+        ]
+        if not participant_ids:
+            raise ValueError("At least one player must join the next round.")
+
+        self.bag = make_tile_bag(self.bag_multiplier)
+        participant_set = set(participant_ids)
+        for candidate_id in self.player_order:
+            previous_state = self.player_state.get(candidate_id)
+            if previous_state is None:
+                continue
+
+            tiles = Counter()
+            if candidate_id in participant_set:
+                tiles = (
+                    self.custom_rack.copy()
+                    if self.custom_rack is not None
+                    else draw_tiles(
+                        self.bag,
+                        DEFAULT_RANDOM_DRAW_COUNT,
+                        self.rng,
+                    )
+                )
+            previous_state.board = self.board_factory(tiles)
+            previous_state.mode = self.mode
+            self.undo_history[candidate_id] = []
+
+        self.round_player_ids = participant_set
+        self.next_round_player_ids = set()
+        self.winner_id = None
+        self.room_status = ROOM_ACTIVE
+        self.round_number += 1
+        return {
+            "type": "round_started",
+            "round_number": self.round_number,
+            "participant_ids": [
+                str(candidate_id)
+                for candidate_id in participant_ids
+            ],
+            "bag_count": self.bag_count,
+        }
+
+    def play_again(self, player_id: UUID | str) -> dict:
+        player_state = self._get_player_state(player_id)
+        if self.room_status != ROOM_FINISHED:
+            raise ValueError("Play Again is available after the round ends.")
+        self.next_round_player_ids.add(player_state.player.id)
+        return {
+            "type": "rematch_ready",
+            "player_id": str(player_state.player.id),
+            "round_number": self.round_number + 1,
+        }
+
+    def transfer_host(
+        self,
+        *,
+        connected_player_ids: set[UUID] | None = None,
+    ) -> UUID | None:
+        candidates = (
+            set(self.player_state)
+            if connected_player_ids is None
+            else connected_player_ids & set(self.player_state)
+        )
+        for candidate_id in self.player_order:
+            if candidate_id != self.host_player_id and candidate_id in candidates:
+                self.host_player_id = candidate_id
+                return candidate_id
+        return None
 
     def rename_player(
         self,
@@ -189,8 +290,7 @@ class GameSession:
         y: int,
         overwrite: bool = False,
     ) -> dict:
-        self._ensure_active()
-        player_state = self._get_player_state(player_id)
+        player_state = self._active_player_state(player_id)
         before_tiles, before_rack = self._capture_board_edit(player_state.board)
         point = Point(x, y)
         if overwrite:
@@ -223,8 +323,7 @@ class GameSession:
         from_point: Point,
         to_point: Point,
     ) -> dict:
-        self._ensure_active()
-        player_state = self._get_player_state(player_id)
+        player_state = self._active_player_state(player_id)
         before_tiles, before_rack = self._capture_board_edit(player_state.board)
         tile = player_state.board.move_tile(from_point, to_point)
         self._remember_board_edit(
@@ -254,8 +353,7 @@ class GameSession:
         *,
         overwrite: bool = False,
     ) -> dict:
-        self._ensure_active()
-        player_state = self._get_player_state(player_id)
+        player_state = self._active_player_state(player_id)
         before_tiles, before_rack = self._capture_board_edit(player_state.board)
         moves, displaced = player_state.board.move_tiles(
             from_points,
@@ -307,8 +405,7 @@ class GameSession:
         player_id: UUID | str,
         points: list[Point],
     ) -> dict:
-        self._ensure_active()
-        player_state = self._get_player_state(player_id)
+        player_state = self._active_player_state(player_id)
         before_tiles, before_rack = self._capture_board_edit(player_state.board)
         removed = player_state.board.remove_letters(points)
         self._remember_board_edit(
@@ -339,8 +436,7 @@ class GameSession:
         }
 
     def remove_tile(self, player_id: UUID | str, x: int, y: int) -> dict:
-        self._ensure_active()
-        player_state = self._get_player_state(player_id)
+        player_state = self._active_player_state(player_id)
         before_tiles, before_rack = self._capture_board_edit(player_state.board)
         point = Point(x, y)
         tile = player_state.board.placed_tiles.get(point)
@@ -368,8 +464,7 @@ class GameSession:
 
     def undo(self, player_id: UUID | str) -> dict:
         """Atomically apply the inverse patch for the latest board edit."""
-        self._ensure_active()
-        player_state = self._get_player_state(player_id)
+        player_state = self._active_player_state(player_id)
         history = self.undo_history.setdefault(player_state.player.id, [])
         if not history:
             raise ValueError("There are no board edits to undo.")
@@ -394,22 +489,23 @@ class GameSession:
         }
 
     def player_can_peel(self, player_id: UUID | str) -> bool:
-        player_state = self._get_player_state(player_id)
+        player_state = self._active_player_state(player_id)
         return player_state.can_peel_board
 
     def player_can_dump(self, player_id: UUID | str) -> bool:
-        player_state = self._get_player_state(player_id)
+        player_state = self._active_player_state(player_id)
         return player_state.can_dump_rack and self.bag_count > 0
 
     def peel(self, player_id: UUID | str) -> dict:
-        self._ensure_active()
-        player_state = self._get_player_state(player_id)
+        player_state = self._active_player_state(player_id)
         if not player_state.can_peel_board:
             raise ValueError("Player cannot peel.")
 
-        player_count = len(self.player_state)
+        player_count = len(self.round_player_ids)
         if self.bag_count < player_count:
             self.winner_id = player_state.player.id
+            self.room_status = ROOM_FINISHED
+            self.next_round_player_ids = set()
             self._clear_all_undo_history()
             return {
                 "type": "game_over",
@@ -420,7 +516,10 @@ class GameSession:
             }
 
         drawn_by_player = {}
-        for other_player_state in self.player_state.values():
+        for other_player_id in self.player_order:
+            if other_player_id not in self.round_player_ids:
+                continue
+            other_player_state = self.player_state[other_player_id]
             drawn = draw_tiles(self.bag, 1, self.rng)
             other_player_state.board.unplaced_letters.update(drawn)
             drawn_by_player[str(other_player_state.player.id)] = _counter_payload(drawn)
@@ -432,11 +531,10 @@ class GameSession:
         }
 
     def dump(self, player_id: UUID | str, char: str) -> dict:
-        self._ensure_active()
+        player_state = self._active_player_state(player_id)
         if self.bag_count == 0:
             raise ValueError("No tiles remain in the bag.")
 
-        player_state = self._get_player_state(player_id)
         char = normalize_char(char)
         if player_state.board.unplaced_letters[char] <= 0:
             raise ValueError(f"No {char} tile is available to dump.")
@@ -473,21 +571,48 @@ class GameSession:
         player_id = self._normalize_player_id(player_id)
         player_state = self._get_player_state(player_id)
         state = player_state.to_private_state()
+        is_host = player_id == self.host_player_id
+        is_participating = player_id in self.round_player_ids
+        is_ready = player_id in self.next_round_player_ids
         state.update({
             "success": success,
             "game_id": str(self.game_id),
             "bag_count": self.bag_count,
-            "can_peel": self._can_player_attempt_peel(player_state, validate=True),
+            "can_peel": (
+                is_participating
+                and self._can_player_attempt_peel(player_state, validate=True)
+            ),
             "can_dump": (
-                not self.is_game_over
+                self.is_round_active
+                and is_participating
                 and player_state.can_dump_rack
                 and self.bag_count > 0
             ),
             "can_undo": (
-                not self.is_game_over
+                self.is_round_active
+                and is_participating
                 and bool(self.undo_history.get(player_state.player.id))
             ),
             "is_game_over": self.is_game_over,
+            "room_status": self.room_status,
+            "round_number": self.round_number,
+            "host_player_id": (
+                str(self.host_player_id)
+                if self.host_player_id
+                else None
+            ),
+            "is_host": is_host,
+            "is_participating": is_participating,
+            "is_ready_for_next_round": is_ready,
+            "can_play_again": (
+                self.room_status == ROOM_FINISHED
+                and not is_ready
+            ),
+            "can_start_round": (
+                is_host
+                and self.room_status in {ROOM_WAITING, ROOM_FINISHED}
+                and bool(self.next_round_player_ids)
+            ),
             "winner_id": str(self.winner_id) if self.winner_id else None,
             "winner_name": self.winner_name,
             "bag_multiplier": self.bag_multiplier,
@@ -496,8 +621,28 @@ class GameSession:
         })
         if message:
             state["message"] = message
-        if self.is_game_over:
-            state["messages"] = [self._winner_message()]
+        if self.room_status == ROOM_WAITING:
+            state["messages"] = [
+                (
+                    "Start the round when everyone has joined."
+                    if is_host
+                    else "Waiting for the host to start the round."
+                )
+            ]
+        elif self.room_status == ROOM_FINISHED:
+            state["messages"] = [
+                (
+                    f"Ready for round {self.round_number + 1}. "
+                    "Waiting for the host to start."
+                    if is_ready
+                    else f"{self._winner_message()} Choose Play Again to join "
+                    "the next round."
+                )
+            ]
+        elif not is_participating:
+            state["messages"] = [
+                "A round is in progress. You can play when the next round starts."
+            ]
         elif state["can_peel"]:
             state["messages"] = ["Peel is available. Draw one new tile for every player."]
         return state
@@ -507,6 +652,13 @@ class GameSession:
             "game_id": str(self.game_id),
             "bag_count": self.bag_count,
             "is_game_over": self.is_game_over,
+            "room_status": self.room_status,
+            "round_number": self.round_number,
+            "host_player_id": (
+                str(self.host_player_id)
+                if self.host_player_id
+                else None
+            ),
             "winner_id": str(self.winner_id) if self.winner_id else None,
             "winner_name": self.winner_name,
             "mode": self.mode,
@@ -520,16 +672,41 @@ class GameSession:
         *,
         validate: bool = True,
     ) -> dict:
-        return self._get_player_state(player_id).to_public_state(validate=validate)
+        player_state = self._get_player_state(player_id)
+        state = player_state.to_public_state(validate=validate)
+        state.update(self._player_room_metadata(player_state.player.id))
+        return state
 
     def player_action_capabilities(self, player_id: UUID | str) -> dict:
         return self._action_capabilities(self._get_player_state(player_id))
 
     def to_record(self) -> dict:
         return {
-            "version": 4,
+            "version": 5,
             "game_id": str(self.game_id),
             "mode": self.mode,
+            "room_status": self.room_status,
+            "round_number": self.round_number,
+            "host_player_id": (
+                str(self.host_player_id)
+                if self.host_player_id
+                else None
+            ),
+            "player_order": [
+                str(player_id)
+                for player_id in self.player_order
+                if player_id in self.player_state
+            ],
+            "round_player_ids": [
+                str(player_id)
+                for player_id in self.player_order
+                if player_id in self.round_player_ids
+            ],
+            "next_round_player_ids": [
+                str(player_id)
+                for player_id in self.player_order
+                if player_id in self.next_round_player_ids
+            ],
             "bag": dict(self.bag),
             "bag_multiplier": self.bag_multiplier,
             "custom_rack": (
@@ -584,6 +761,53 @@ class GameSession:
             else DEFAULT_BAG_MULTIPLIER
         )
         player_state: dict[UUID, PlayerState] = {}
+        player_records = record.get("players", [])
+        restored_player_ids = [
+            UUID(str(player_record["player_id"]))
+            for player_record in player_records
+        ]
+        if record_version >= 5:
+            room_status = str(record.get("room_status", ROOM_WAITING))
+            if room_status not in ROOM_STATUSES:
+                room_status = ROOM_WAITING
+            player_order = [
+                UUID(str(player_id))
+                for player_id in record.get("player_order", [])
+                if UUID(str(player_id)) in restored_player_ids
+            ]
+            player_order.extend(
+                player_id
+                for player_id in restored_player_ids
+                if player_id not in player_order
+            )
+            round_player_ids = {
+                UUID(str(player_id))
+                for player_id in record.get("round_player_ids", [])
+                if UUID(str(player_id)) in restored_player_ids
+            }
+            next_round_player_ids = {
+                UUID(str(player_id))
+                for player_id in record.get("next_round_player_ids", [])
+                if UUID(str(player_id)) in restored_player_ids
+            }
+            host_player_id = (
+                UUID(str(record["host_player_id"]))
+                if record.get("host_player_id")
+                else None
+            )
+            round_number = max(0, int(record.get("round_number", 0)))
+        else:
+            room_status = (
+                ROOM_FINISHED
+                if record.get("winner_id")
+                else ROOM_ACTIVE
+            )
+            player_order = restored_player_ids
+            round_player_ids = set(restored_player_ids)
+            next_round_player_ids = set()
+            host_player_id = restored_player_ids[0] if restored_player_ids else None
+            round_number = 1 if restored_player_ids else 0
+
         session = cls(
             game_id=str(record["game_id"]),
             bag=bag,
@@ -604,9 +828,15 @@ class GameSession:
                 if record.get("winner_id")
                 else None
             ),
+            room_status=room_status,
+            host_player_id=host_player_id,
+            round_number=round_number,
+            player_order=player_order,
+            round_player_ids=round_player_ids,
+            next_round_player_ids=next_round_player_ids,
         )
 
-        for player_record in record.get("players", []):
+        for player_record in player_records:
             board = board_factory(Counter(player_record.get("rack") or {}))
             for tile_record in player_record.get("placed_tiles", []):
                 point = Point(int(tile_record["x"]), int(tile_record["y"]))
@@ -627,19 +857,44 @@ class GameSession:
                 else []
             )
 
+        valid_player_ids = set(session.player_state)
+        session.player_order = [
+            player_id
+            for player_id in session.player_order
+            if player_id in valid_player_ids
+        ]
+        session.player_order.extend(
+            player_id
+            for player_id in valid_player_ids
+            if player_id not in session.player_order
+        )
+        session.round_player_ids &= valid_player_ids
+        session.next_round_player_ids &= valid_player_ids
+        if session.host_player_id not in valid_player_ids:
+            session.host_player_id = (
+                session.player_order[0]
+                if session.player_order
+                else None
+            )
+
         return session
 
     def _public_players(self) -> list[dict]:
         return [
-            player_state.to_public_state()
-            for player_state in sorted(
-                self.player_state.values(),
-                key=lambda state: (
-                    (state.player.player_name or "").casefold(),
-                    str(state.player.id),
-                ),
-            )
+            {
+                **self.player_state[player_id].to_public_state(),
+                **self._player_room_metadata(player_id),
+            }
+            for player_id in self.player_order
+            if player_id in self.player_state
         ]
+
+    def _player_room_metadata(self, player_id: UUID) -> dict:
+        return {
+            "is_host": player_id == self.host_player_id,
+            "is_participating": player_id in self.round_player_ids,
+            "is_ready_for_next_round": player_id in self.next_round_player_ids,
+        }
 
     def _resolved_player_name(self, player_name: object) -> str:
         normalized_name = self._normalize_player_name(player_name)
@@ -673,15 +928,21 @@ class GameSession:
         return normalized_name
 
     def _action_capabilities(self, player_state: PlayerState) -> dict:
+        is_participating = player_state.player.id in self.round_player_ids
         return {
-            "can_peel": self._can_player_attempt_peel(player_state, validate=False),
+            "can_peel": (
+                is_participating
+                and self._can_player_attempt_peel(player_state, validate=False)
+            ),
             "can_dump": (
-                not self.is_game_over
+                self.is_round_active
+                and is_participating
                 and player_state.can_dump_rack
                 and self.bag_count > 0
             ),
             "can_undo": (
-                not self.is_game_over
+                self.is_round_active
+                and is_participating
                 and bool(self.undo_history.get(player_state.player.id))
             ),
         }
@@ -807,7 +1068,7 @@ class GameSession:
         *,
         validate: bool,
     ) -> bool:
-        if self.is_game_over:
+        if not self.is_round_active:
             return False
 
         board_ready = (
@@ -821,8 +1082,17 @@ class GameSession:
         return True
 
     def _ensure_active(self) -> None:
-        if self.is_game_over:
-            raise ValueError("Game is complete. Start a new game to keep playing.")
+        if self.room_status == ROOM_WAITING:
+            raise ValueError("The round has not started yet.")
+        if self.room_status == ROOM_FINISHED:
+            raise ValueError("The round is complete. Choose Play Again to keep playing.")
+
+    def _active_player_state(self, player_id: UUID | str) -> PlayerState:
+        self._ensure_active()
+        player_state = self._get_player_state(player_id)
+        if player_state.player.id not in self.round_player_ids:
+            raise ValueError("You are not participating in the current round.")
+        return player_state
 
     def _get_player_state(self, player_id: UUID | str) -> PlayerState:
         normalized_player_id = self._normalize_player_id(player_id)

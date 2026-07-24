@@ -17,12 +17,12 @@
 
 - [ ] Sometimes I get 'connected to game' and 'connection not ready yet' even when I am already playing in a match
     - Need to figure out why connectivity is so buns
-- [ ] More concise GameIDs
 - [ ] More explicit singleplayer option -> avoid some overhead if you actually just want to play by yourself?
 
-- [ ] Make custom game IDs
-- [ ] Ability to rematch within the same game
-- [ ] Host starts game when everyone has joined
+- [ ] More Concise Game IDs? (May be unecessary with custom IDs and lobby rematches)
+- [X] Make custom game IDs
+- [X] Ability to rematch within the same game
+- [X] Host starts game when everyone has joined
 - [ ] Cap player count at 8, unless it's a custom game where everyone starts with the same rack
 
 - [ ] Clearer dump/peel indicators

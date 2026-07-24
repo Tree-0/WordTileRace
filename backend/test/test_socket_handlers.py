@@ -1,6 +1,8 @@
 from collections import Counter
 import random
+import time
 import unittest
+from unittest.mock import patch
 from uuid import UUID
 
 from backend.app import create_app
@@ -170,10 +172,12 @@ class SocketHandlerTests(unittest.TestCase):
         second_ack = self.emit_ack(second_client, "join_game", {
             "game_id": first_ack["game_id"],
         })
+        start_ack = self.emit_ack(first_client, "start_round")
 
         session = store.get(first_ack["game_id"])
         self.assertTrue(first_ack["success"])
         self.assertTrue(second_ack["success"])
+        self.assertTrue(start_ack["success"])
         self.assertEqual(session.mode, "custom")
         self.assertIsNone(session.custom_rack)
         self.assertEqual(
@@ -250,6 +254,153 @@ class SocketHandlerTests(unittest.TestCase):
             ["Alice", "Bob"],
         )
 
+    def test_host_starts_waiting_room_and_active_round_rejects_new_players(self):
+        app, store = self.make_app_and_store()
+        host_client = socketio.test_client(app)
+        host_ack = self.emit_ack(host_client, "create_game", {
+            "mode": "random",
+            "player_name": "Host",
+        })
+        host_states = [
+            event["args"][0]
+            for event in host_client.get_received()
+            if event["name"] == "state"
+        ]
+        friend_client = socketio.test_client(app)
+        friend_ack = self.emit_ack(friend_client, "join_game", {
+            "game_id": host_ack["game_id"],
+            "player_name": "Friend",
+        })
+
+        rejected_start = self.emit_ack(friend_client, "start_round")
+        started = self.emit_ack(host_client, "start_round")
+        late_client = socketio.test_client(app)
+        late_join = self.emit_ack(late_client, "join_game", {
+            "game_id": host_ack["game_id"],
+            "player_name": "Late",
+        })
+        reconnect_client = socketio.test_client(app)
+        reconnect = self.emit_ack(reconnect_client, "join_game", {
+            "game_id": host_ack["game_id"],
+            "player_id": friend_ack["player_id"],
+            "player_name": "Friend",
+        })
+
+        session = store.get(host_ack["game_id"])
+        self.assertEqual(host_states[-1]["room_status"], "waiting")
+        self.assertTrue(host_states[-1]["is_host"])
+        self.assertTrue(host_states[-1]["can_start_round"])
+        self.assertFalse(rejected_start["success"])
+        self.assertIn("Only the host", rejected_start["message"])
+        self.assertTrue(started["success"])
+        self.assertEqual(started["round_number"], 1)
+        self.assertFalse(late_join["success"])
+        self.assertIn("already in progress", late_join["message"])
+        self.assertTrue(reconnect["success"])
+        self.assertEqual(reconnect["player_id"], friend_ack["player_id"])
+        self.assertEqual(session.room_status, "active")
+        self.assertEqual(len(session.round_player_ids), 2)
+
+    def test_players_opt_into_rematch_and_host_restarts_same_room(self):
+        app, store = self.make_app_and_store()
+        host_client = socketio.test_client(app)
+        host_ack = self.emit_ack(host_client, "create_game", {
+            "mode": "custom",
+            "letters": "BE",
+            "player_name": "Host",
+        })
+        friend_client = socketio.test_client(app)
+        friend_ack = self.emit_ack(friend_client, "join_game", {
+            "game_id": host_ack["game_id"],
+            "player_name": "Friend",
+        })
+        self.emit_ack(host_client, "start_round")
+        session = store.get(host_ack["game_id"])
+        session.bag = Counter({"Z": 1})
+        store.save(session)
+        self.emit_ack(host_client, "place_tile", {
+            "x": 0,
+            "y": 0,
+            "char": "B",
+        })
+        self.emit_ack(host_client, "place_tile", {
+            "x": 1,
+            "y": 0,
+            "char": "E",
+        })
+        won = self.emit_ack(host_client, "peel")
+
+        ready = self.emit_ack(friend_client, "play_again")
+        next_player_client = socketio.test_client(app)
+        next_player = self.emit_ack(next_player_client, "join_game", {
+            "game_id": host_ack["game_id"],
+            "player_name": "New Friend",
+        })
+        restarted = self.emit_ack(host_client, "start_round")
+
+        session = store.get(host_ack["game_id"])
+        self.assertTrue(won["success"])
+        self.assertTrue(ready["success"])
+        self.assertTrue(next_player["success"])
+        self.assertTrue(restarted["success"])
+        self.assertEqual(restarted["round_number"], 2)
+        self.assertEqual(session.game_id, host_ack["game_id"])
+        self.assertEqual(session.room_status, "active")
+        self.assertEqual(
+            session.round_player_ids,
+            {
+                UUID(friend_ack["player_id"]),
+                UUID(next_player["player_id"]),
+            },
+        )
+        self.assertEqual(
+            session.get_player_state(host_ack["player_id"]).rack_count,
+            0,
+        )
+        self.assertEqual(
+            session.get_player_state(friend_ack["player_id"]).rack_count,
+            2,
+        )
+
+    def test_disconnected_waiting_host_transfers_after_grace_period(self):
+        app, store = self.make_app_and_store()
+        host_client = socketio.test_client(app)
+        host_ack = self.emit_ack(host_client, "create_game", {
+            "mode": "random",
+            "player_name": "Host",
+        })
+
+        with patch(
+            "backend.socket_handlers.HOST_DISCONNECT_GRACE_SECONDS",
+            0,
+        ):
+            host_client.disconnect()
+            time.sleep(0.02)
+            friend_client = socketio.test_client(app)
+            friend_ack = self.emit_ack(friend_client, "join_game", {
+                "game_id": host_ack["game_id"],
+                "player_name": "Friend",
+            })
+            deadline = time.time() + 1
+            while time.time() < deadline:
+                session = store.get(host_ack["game_id"])
+                if session.host_player_id == UUID(friend_ack["player_id"]):
+                    break
+                time.sleep(0.01)
+
+        session = store.get(host_ack["game_id"])
+        self.assertEqual(
+            session.host_player_id,
+            UUID(friend_ack["player_id"]),
+        )
+        friend_states = [
+            event["args"][0]
+            for event in friend_client.get_received()
+            if event["name"] == "state"
+        ]
+        self.assertTrue(friend_states[-1]["is_host"])
+        self.assertTrue(friend_states[-1]["can_start_round"])
+
     def test_join_game_reconnects_existing_player_and_updates_name(self):
         app, store = self.make_app_and_store()
         first_client = socketio.test_client(app)
@@ -301,6 +452,7 @@ class SocketHandlerTests(unittest.TestCase):
             "game_id": first_ack["game_id"],
             "player_name": "Bob",
         })
+        self.emit_ack(first_client, "start_round")
         session = store.get(first_ack["game_id"])
         session.bag = Counter({"Z": 1})
         store.save(session)
@@ -351,6 +503,7 @@ class SocketHandlerTests(unittest.TestCase):
             "mode": "custom",
             "letters": "BE",
         })
+        self.emit_ack(client, "start_round")
         client.get_received()
 
         action_ack = self.emit_ack(client, "place_tile", {
@@ -388,6 +541,7 @@ class SocketHandlerTests(unittest.TestCase):
             "mode": "custom",
             "letters": "BEX",
         })
+        self.emit_ack(client, "start_round")
         for x, char in enumerate("BEX"):
             self.emit_ack(client, "place_tile", {
                 "x": x,
@@ -427,6 +581,7 @@ class SocketHandlerTests(unittest.TestCase):
             "mode": "custom",
             "letters": "BEX",
         })
+        self.emit_ack(client, "start_round")
         for x, char in enumerate("BEX"):
             self.emit_ack(client, "place_tile", {
                 "x": x,
@@ -459,6 +614,7 @@ class SocketHandlerTests(unittest.TestCase):
             "mode": "custom",
             "letters": "BEX",
         })
+        self.emit_ack(client, "start_round")
         for x, char in enumerate("BEX"):
             self.emit_ack(client, "place_tile", {
                 "x": x,
@@ -495,6 +651,7 @@ class SocketHandlerTests(unittest.TestCase):
             "mode": "custom",
             "letters": "BE",
         })
+        self.emit_ack(client, "start_round")
         self.emit_ack(client, "place_tile", {
             "x": 0,
             "y": 0,
@@ -540,6 +697,7 @@ class SocketHandlerTests(unittest.TestCase):
         self.emit_ack(second_client, "join_game", {
             "game_id": first_ack["game_id"],
         })
+        self.emit_ack(first_client, "start_round")
         first_client.get_received()
         second_client.get_received()
 
@@ -564,6 +722,7 @@ class SocketHandlerTests(unittest.TestCase):
         second_ack = self.emit_ack(second_client, "join_game", {
             "game_id": first_ack["game_id"],
         })
+        self.emit_ack(first_client, "start_round")
 
         session = store.get(first_ack["game_id"])
         first = session.get_player_state(first_ack["player_id"])

@@ -43,6 +43,10 @@ class AppTests(unittest.TestCase):
         self.assertIn(b'id="players-drawer"', response.data)
         self.assertIn(b'id="overwrite-block-moves"', response.data)
         self.assertIn(b'id="undo-button"', response.data)
+        self.assertIn(b'id="round-lobby"', response.data)
+        self.assertIn(b'id="start-round-button"', response.data)
+        self.assertIn(b'id="winner-play-again-button"', response.data)
+        self.assertIn(b'id="winner-leave-button"', response.data)
         self.assertIn(b'id="help-dialog"', response.data)
         self.assertIn(b'id="winner-dialog"', response.data)
 

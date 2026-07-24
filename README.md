@@ -26,8 +26,10 @@ from 1x to 4x, or remove it with the NONE option. Each player gets the same
 exact custom rack when one is supplied, or draws 21 random tiles otherwise.
 
 The game ends when fewer tiles remain in the bag than there are players and a
-player has an empty rack with a valid board. As of now, there are no timers, no
-scores, and no saved info beyond the
+player has an empty rack with a valid board. The game room remains available
+after a winner is declared: players can opt into another round, and the host can
+restart with those players without creating or sharing a new game ID. As of now,
+there are no timers, no scores, and no saved info beyond the
 scope of the current match (no player stats, streaks, etc.).
 
 ## Controls
@@ -90,10 +92,22 @@ matches the deployable runtime shape more closely than the in-memory local run.
 
 Opening the app shows a lobby where you can create a random or custom game, or
 join one by pasting its game ID or invite URL. Players choose a nickname before
-entering a match; opening an invite URL prompts new players for one and reconnects
-returning players automatically. Gameplay actions are sent over Socket.IO to the
-server, where `GameSession` validates and applies them before broadcasting updated
-private player state. The collapsible tab on the left shows everyone in the match.
+entering a match. The room creator is the host and starts each round after
+everyone has joined. New players cannot enter while a round is active, but
+returning players can reconnect with their saved player ID. Opening an invite URL
+prompts new players for a nickname and reconnects returning players automatically.
+Gameplay actions are sent over Socket.IO to the server, where `GameSession`
+validates and applies them before broadcasting updated private player state. The
+collapsible tab on the left shows everyone in the room and identifies the host.
+
+After a winner is declared, each player can select **Play Again** to enter the
+next-round roster. New players may also join at this point. The host can start
+the next round with everyone who opted in; players who did not opt in remain in
+the room but do not receive a rack for that round. Boards, racks, the shared bag,
+the winner, and undo histories reset, while the game ID, host, nicknames, and
+original game settings remain. If the host disconnects while the room is waiting
+or between rounds, host control transfers to the earliest-joined connected player
+after a short grace period.
 
 When creating either kind of match, the host can optionally choose a
 case-insensitive custom game ID with 3-24 letters or numbers and single hyphens

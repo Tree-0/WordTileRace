@@ -59,6 +59,7 @@ class GameStoreTests(unittest.TestCase):
         )
         session = GameSession.new_game("BE", board_factory=make_board)
         player_state = session.add_player("Natha")
+        session.start_round(player_state.player.id)
         session.place_tile(player_state.player.id, "B", 0, 0)
 
         store.save(session)
@@ -87,6 +88,7 @@ class GameStoreTests(unittest.TestCase):
         )
         session = GameSession.new_game("BE", board_factory=make_board)
         player_state = session.add_player("Natha")
+        session.start_round(player_state.player.id)
         session.place_tile(player_state.player.id, "B", 0, 0)
 
         store.save(session)
