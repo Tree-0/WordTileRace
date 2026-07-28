@@ -5,8 +5,7 @@ Then I realized that I needed to actually be able to show my friends that I was
 better than them, so I made it multiplayer.
 
 This is a real-time word-tile web game built with a Python game model,
-Flask, Flask-SocketIO, Redis session storage, and a vanilla JavaScript
-grid UI.
+Flask, Flask-SocketIO, Redis session storage, and a vanilla JavaScript.
 
 
 ## Game Rules
